@@ -217,7 +217,6 @@ function ChatBot() {
       {showThankYou && (
         <div className="bg-white rounded-lg shadow-md p-6 w-full max-w-md mt-6 text-center">
           <h2 className="text-xl font-semibold text-blue-700 mb-2">Thank you for interacting with the assistant!</h2>
-          <p className="text-gray-700">We will get back to you shortly with more details.</p>
           <p className="text-gray-500 mt-1">You may now close this window.</p>
         </div>
       )}
