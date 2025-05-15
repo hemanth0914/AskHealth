@@ -43,37 +43,56 @@ function ChatBot() {
     setter(event.target.value);
   };
 
-  const previousConversationHistory = "Conversation-1: The mother is 30 years old and the child is 5 years old. The child has no health problems and has received all vaccinations. The mother is concerned about the child's feeding habits. Conversation - 2: The child has asthma and has received all vaccinations. The mother is concerned about the child's feeding habits.";
+
 
   const handleStart = async () => {
     setLoading(true);
-
+  
     try {
-      // Start the assistant with mother's and child's information
-      console.log("Starting assistant with data:");
-      console.log("-----------------------");  
-      const data = await startAssistant(motherAge, childAge, healthProblems, vaccinationHistory, feedingConcerns, previousConversationHistory);
+      const token = localStorage.getItem("token");
+      const userEmail = localStorage.getItem("userEmail");
+  
+      if (!token || !userEmail) {
+        alert("User is not authenticated. Please log in.");
+        return;
+      }
+  
+      // Step 1: Fetch previous conversation history from the backend
+      const response = await fetch(`http://localhost:8000/summaries/${userEmail}`, {
+        headers: {
+          "Authorization": `Bearer ${token}`
+        }
+      });
+  
+      const previousConversations = await response.json();
+  
+      if (!response.ok) {
+        throw new Error("Failed to fetch previous conversations");
+      }
+  
+      // Step 2: Format previous conversation history
+      const previousConversationHistory = previousConversations
+        .map((entry) => {
+          return `Conversation: 
+          Summary: ${entry.summary}. 
+          Date: ${new Date(entry.startedAt).toLocaleDateString()}`;
+        })
+        .join("\n");
+  
+      console.log("Previous Conversations History:");
+      console.log(previousConversationHistory);
+  
+      // Step 3: Start the assistant with the mother's and child's info along with the previous conversation history
+      const data = await startAssistant(
+        motherAge,
+        childAge,
+        healthProblems,
+        vaccinationHistory,
+        feedingConcerns,
+        previousConversationHistory
+      );
       console.log("Assistant started with call ID:", data.id);
       setCallId(data.id);
-
-
-      
-      // Optionally, save this data to your backend or handle as needed
-      // await fetch("http://localhost:5001/api/candidates", {
-      //   method: "POST",
-      //   headers: {
-      //     "Content-Type": "application/json",
-      //   },
-      //   body: JSON.stringify({
-      //     motherAge,
-      //     childAge,
-      //     healthProblems,
-      //     feedingConcerns,
-      //     vaccinationHistory,
-      //     callId: data.id,
-      //     timestamp: new Date().toISOString(),
-      //   }),
-      // });
     } catch (error) {
       console.error("Error starting assistant or sending data:", error);
       alert("An error occurred. Please try again.");
@@ -81,40 +100,64 @@ function ChatBot() {
       setLoading(false);
     }
   };
+  
 
   const handleStop = async () => {
     stopAssistant();
     setFinished(true);
     setShowThankYou(true);
+
     // Delay the summary fetch to give Vapi time to process the analysis
-  setTimeout(async () => {
-    try {
-      const response = await fetch("http://localhost:8000/fetch-summary", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json"
-        },
-        body: JSON.stringify({
-          user_id: "user_123_fake",
-          call_id: callId
-        })
-      });
+    setTimeout(async () => {
+      try {
+        // Step 1: Fetch Call Details from Vapi API
+        const callDetailsResponse = await fetch(`https://api.vapi.ai/call/${callId}`, {
+          method: "GET",
+          headers: {
+            "Authorization": "Bearer 44575b30-be10-41f3-9cb3-af859aec0678"
+          },
+        });
 
-      const data = await response.json();
+        const callDetails = await callDetailsResponse.json();
 
-      if (!response.ok) {
-        throw new Error(data.detail || "Failed to fetch summary");
+        if (!callDetailsResponse.ok) {
+          throw new Error("Failed to fetch call details");
+        }
+
+        const token = localStorage.getItem("token");
+        const userEmail = localStorage.getItem("userEmail");
+
+        // Step 2: Send the details to the backend for summary
+        const fetchSummaryResponse = await fetch("http://localhost:8000/fetch-summary", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "Authorization": `Bearer ${token}` // Add JWT token in Authorization header
+          },
+          body: JSON.stringify({
+            user_id: userEmail, // You can replace with actual user_id
+            call_id: callId,
+            summary: callDetails.summary,  // Assuming `summary` is available in the response
+            startedAt: callDetails.startedAt,  // Assuming `startedAt` is available in the response
+            endedAt: callDetails.endedAt   // Assuming `endedAt` is available in the response
+          })
+        });
+
+        const data = await fetchSummaryResponse.json();
+
+        if (!fetchSummaryResponse.ok) {
+          throw new Error(data.detail || "Failed to fetch summary");
+        }
+
+        console.log("Summary received:", data);
+
+        // Optionally, set state to show summary on UI
+        // setSummary(data.summary);
+
+      } catch (error) {
+        console.error("Error fetching call summary:", error);
       }
-
-      console.log("Summary received:", data);
-
-      // Optional: set state to show summary on UI
-      // setSummary(data.summary);
-
-    } catch (error) {
-      console.error("Error fetching call summary:", error);
-    }
-  }, 10000); // Wait 10 seconds before hitting backend
+    }, 10000); // Wait 10 seconds before hitting backend
   };
 
   const showForm = !loading && !started && !finished;

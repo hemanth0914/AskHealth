@@ -6,24 +6,52 @@ export default function DashboardPage() {
   const [loading, setLoading] = useState(true);
   const navigate = useNavigate();
 
+  // Check if the user is already logged in (token and userEmail should be in localStorage)
   useEffect(() => {
+    const token = localStorage.getItem("token");
+    const userEmail = localStorage.getItem("userEmail");
+
+    if (!token || !userEmail) {
+      // If not logged in, redirect to login page
+      navigate("/login");
+      return;
+    }
+ 
     const fetchSummaries = async () => {
       try {
-        const response = await fetch("http://localhost:8000/summaries/user_123_fake");
+        const response = await fetch(`http://localhost:8000/summaries/${userEmail}`, {
+          headers: {
+            Authorization: `Bearer ${token}`
+          }
+        });
+
         const data = await response.json();
-        setSummaries(data);
-        setLoading(false);
+        if (response.ok) {
+          setSummaries(data);
+        } else {
+          alert(data.detail || "Session expired. Please login again.");
+          navigate("/login");
+        }
       } catch (error) {
-        console.error("Failed to fetch summaries:", error);
+        console.error("Error fetching summaries:", error);
+        alert("Network error. Please try again.");
+      } finally {
         setLoading(false);
       }
     };
 
     fetchSummaries();
-  }, []);
+  }, [navigate]);
 
   const navigateToChatBot = () => {
-    navigate('/care');
+    const userEmail = localStorage.getItem("userEmail");
+    navigate('/care', { state: { userEmail } });
+  };
+
+  const handleLogout = () => {
+    localStorage.removeItem("token");
+    localStorage.removeItem("userEmail");
+    navigate("/login");
   };
 
   if (loading) {
@@ -35,7 +63,12 @@ export default function DashboardPage() {
       <header className="bg-blue-600 shadow-md sticky top-0 z-10 rounded-lg mb-6">
         <div className="max-w-screen-xl mx-auto px-6 py-4 flex items-center justify-between border-b border-blue-700 rounded-lg">
           <h1 className="text-3xl font-bold text-white">Mother & Child Care Dashboard</h1>
-          <span className="text-sm text-white hidden sm:inline">Your assistant conversation history</span>
+          <button
+            onClick={handleLogout}
+            className="text-white bg-red-500 hover:bg-red-600 px-3 py-1 rounded text-sm"
+          >
+            Logout
+          </button>
         </div>
       </header>
 
