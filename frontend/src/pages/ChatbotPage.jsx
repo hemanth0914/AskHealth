@@ -44,7 +44,6 @@ function ChatBot() {
   };
 
 
-
   const handleStart = async () => {
     setLoading(true);
   
@@ -58,7 +57,7 @@ function ChatBot() {
       }
   
       // Step 1: Fetch previous conversation history from the backend
-      const response = await fetch(`http://localhost:8000/summaries/${userEmail}`, {
+      const response = await fetch("http://localhost:8000/summaries/", {
         headers: {
           "Authorization": `Bearer ${token}`
         }
@@ -119,7 +118,7 @@ function ChatBot() {
         });
 
         const callDetails = await callDetailsResponse.json();
-
+        console.log("Call Details:", callDetails);
         if (!callDetailsResponse.ok) {
           throw new Error("Failed to fetch call details");
         }
@@ -128,7 +127,7 @@ function ChatBot() {
         const userEmail = localStorage.getItem("userEmail");
 
         // Step 2: Send the details to the backend for summary
-        const fetchSummaryResponse = await fetch("http://localhost:8000/fetch-summary", {
+        const storeSummaryResponse = await fetch("http://localhost:8000/store-summary", {
           method: "POST",
           headers: {
             "Content-Type": "application/json",
@@ -143,10 +142,10 @@ function ChatBot() {
           })
         });
 
-        const data = await fetchSummaryResponse.json();
+        const data = await storeSummaryResponse.json();
 
-        if (!fetchSummaryResponse.ok) {
-          throw new Error(data.detail || "Failed to fetch summary");
+        if (!storeSummaryResponse.ok) {
+          throw new Error(data.detail || "Failed to store summary");
         }
 
         console.log("Summary received:", data);
@@ -155,7 +154,7 @@ function ChatBot() {
         // setSummary(data.summary);
 
       } catch (error) {
-        console.error("Error fetching call summary:", error);
+        console.error("Error storing call summary:", error);
       }
     }, 10000); // Wait 10 seconds before hitting backend
   };
