@@ -5,27 +5,25 @@ const assistant = import.meta.env.VITE_VAPI_ASSISTANT_ID;
 
 
 export const startAssistant = async (
-    motherAge,
-    childAge,
-    health_problems,
-    vaccination_history,
-    feedingConcerns,
     previousConversationHistory
   ) => {
     const assistantOverrides = {
       variableValues: {
-        motherAge,
-        childAge,
-        health_problems,
-        vaccination_history,
-        feedingConcerns,
         previousConversationHistory
       }
     };
     console.log("previousConversation", previousConversationHistory);
     console.log("Starting assistant with ID and overrides:", assistant, assistantOverrides);
   
-    return await vapi.start(assistant, assistantOverrides);
+    try {
+      const response = await vapi.start(assistant, assistantOverrides);
+      console.log("Raw response from vapi.start():", response);
+  
+      return response;
+    } catch (err) {
+      console.error("Error in vapi.start():", err);
+      return null;
+    }
   };
   
 

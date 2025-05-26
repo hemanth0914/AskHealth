@@ -23,10 +23,11 @@ function App() {
       <Routes>
         <Route path="/" element={<HomePage />} />
 
-        <Route
-          path="/dashboard"
-          element={role === 'customer' ? <DashboardPage /> : <Navigate to="/login" replace />}
-        />
+        <Route path="/dashboard" element={<DashboardPage onLogout={() => {
+  localStorage.clear();
+  setRole(null);
+}} />} />
+
         <Route
           path="/care"
           element={role === 'customer' ? <ChatBotPage /> : <Navigate to="/login" replace />}

@@ -1,22 +1,14 @@
 import { useState, useEffect } from "react";
-import { vapi, startAssistant, stopAssistant } from "../ai"; // Assuming startAssistant will now take mother-child info
+import { vapi, startAssistant, stopAssistant } from "../ai";
 import ActiveCallDetails from "../call/ActiveCallDetails";
 
 function ChatBot() {
   const [started, setStarted] = useState(false);
-  const [finished, setFinished] = useState(false);
-
-  const [loading, setLoading] = useState(false);
+  const [loading, setLoading] = useState(true);
   const [assistantIsSpeaking, setAssistantIsSpeaking] = useState(false);
   const [volumeLevel, setVolumeLevel] = useState(0);
   const [callId, setCallId] = useState("");
   const [showThankYou, setShowThankYou] = useState(false);
-
-  const [motherAge, setMotherAge] = useState("");
-  const [childAge, setChildAge] = useState("");
-  const [healthProblems, setHealthProblems] = useState("");
-  const [feedingConcerns, setFeedingConcerns] = useState("");
-  const [vaccinationHistory, setVaccinationHistory] = useState("");
 
   useEffect(() => {
     vapi
@@ -28,200 +20,112 @@ function ChatBot() {
         setStarted(false);
         setLoading(false);
       })
-      .on("speech-start", () => {
-        setAssistantIsSpeaking(true);
-      })
-      .on("speech-end", () => {
-        setAssistantIsSpeaking(false);
-      })
-      .on("volume-level", (level) => {
-        setVolumeLevel(level);
-      });
+      .on("speech-start", () => setAssistantIsSpeaking(true))
+      .on("speech-end", () => setAssistantIsSpeaking(false))
+      .on("volume-level", (level) => setVolumeLevel(level));
   }, []);
 
-  const handleInputChange = (setter) => (event) => {
-    setter(event.target.value);
-  };
+  // Retry loop to wait for valid assistant ID
+  const waitForAssistantId = async (previousConversationHistory, maxAttempts = 5, delay = 1000) => {
+    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+      const data = await startAssistant(previousConversationHistory);
 
+      if (data && (data.id || data.call?.id)) {
+        const id = data.id || data.call.id;
+        console.log("✅ Assistant ready with call ID:", id);
+        return id;
+      }
 
-  const handleStart = async () => {
-    setLoading(true);
-  
-    try {
-      const token = localStorage.getItem("token");
-      const userEmail = localStorage.getItem("userEmail");
-  
-      if (!token || !userEmail) {
-        alert("User is not authenticated. Please log in.");
-        return;
-      }
-  
-      // Step 1: Fetch previous conversation history from the backend
-      const response = await fetch("http://localhost:8000/summaries/", {
-        headers: {
-          "Authorization": `Bearer ${token}`
-        }
-      });
-  
-      const previousConversations = await response.json();
-  
-      if (!response.ok) {
-        throw new Error("Failed to fetch previous conversations");
-      }
-  
-      // Step 2: Format previous conversation history
-      const previousConversationHistory = previousConversations
-        .map((entry) => {
-          return `Conversation: 
-          Summary: ${entry.summary}. 
-          Date: ${new Date(entry.startedAt).toLocaleDateString()}`;
-        })
-        .join("\n");
-  
-      console.log("Previous Conversations History:");
-      console.log(previousConversationHistory);
-  
-      // Step 3: Start the assistant with the mother's and child's info along with the previous conversation history
-      const data = await startAssistant(
-        motherAge,
-        childAge,
-        healthProblems,
-        vaccinationHistory,
-        feedingConcerns,
-        previousConversationHistory
-      );
-      console.log("Assistant started with call ID:", data.id);
-      setCallId(data.id);
-    } catch (error) {
-      console.error("Error starting assistant or sending data:", error);
-      alert("An error occurred. Please try again.");
-    } finally {
-      setLoading(false);
+      console.warn(`⏳ Attempt ${attempt}: Waiting for assistant ID...`);
+      await new Promise((res) => setTimeout(res, delay));
     }
+
+    throw new Error("Assistant did not return a valid ID after multiple attempts.");
   };
-  
+
+  useEffect(() => {
+    const initCall = async () => {
+      try {
+        const token = localStorage.getItem("token");
+
+        const response = await fetch("http://localhost:8000/summaries/", {
+          headers: { Authorization: `Bearer ${token}` },
+        });
+
+        const history = await response.json();
+        const previousConversationHistory = history
+          .map((entry) => `Summary: ${entry.summary}. Date: ${new Date(entry.startedAt).toLocaleDateString()}`)
+          .join("\n");
+
+        const id = await waitForAssistantId(previousConversationHistory);
+        setCallId(id);
+        console.log("📞 Assistant started with call ID:", id);
+
+      } catch (err) {
+        console.error("❌ Call setup failed:", err);
+        alert("Call could not be started.");
+      }
+    };
+
+    const timer = setTimeout(() => {
+      initCall();
+    }, 1000); // 5-second buffer
+
+    return () => clearTimeout(timer);
+  }, []);
 
   const handleStop = async () => {
     stopAssistant();
-    setFinished(true);
     setShowThankYou(true);
-
-    // Delay the summary fetch to give Vapi time to process the analysis
+  
     setTimeout(async () => {
       try {
-        // Step 1: Fetch Call Details from Vapi API
         const callDetailsResponse = await fetch(`https://api.vapi.ai/call/${callId}`, {
           method: "GET",
           headers: {
             "Authorization": "Bearer 44575b30-be10-41f3-9cb3-af859aec0678"
           },
         });
-
+  
         const callDetails = await callDetailsResponse.json();
-        console.log("Call Details:", callDetails);
-        if (!callDetailsResponse.ok) {
-          throw new Error("Failed to fetch call details");
-        }
-
+        if (!callDetailsResponse.ok) throw new Error("Failed to fetch call details");
+  
         const token = localStorage.getItem("token");
-        const userEmail = localStorage.getItem("userEmail");
-
-        // Step 2: Send the details to the backend for summary
+  
         const storeSummaryResponse = await fetch("http://localhost:8000/store-summary", {
           method: "POST",
           headers: {
             "Content-Type": "application/json",
-            "Authorization": `Bearer ${token}` // Add JWT token in Authorization header
+            "Authorization": `Bearer ${token}`
           },
           body: JSON.stringify({
-            user_id: userEmail, // You can replace with actual user_id
             call_id: callId,
-            summary: callDetails.summary,  // Assuming `summary` is available in the response
-            startedAt: callDetails.startedAt,  // Assuming `startedAt` is available in the response
-            endedAt: callDetails.endedAt   // Assuming `endedAt` is available in the response
+            summary: callDetails.summary,
+            startedAt: callDetails.startedAt,
+            endedAt: callDetails.endedAt
           })
         });
-
-        const data = await storeSummaryResponse.json();
-
+  
         if (!storeSummaryResponse.ok) {
-          throw new Error(data.detail || "Failed to store summary");
+          const err = await storeSummaryResponse.json();
+          throw new Error(err.detail || "Failed to store summary");
         }
-
-        console.log("Summary received:", data);
-
-        // Optionally, set state to show summary on UI
-        // setSummary(data.summary);
-
+  
+        console.log("✅ Summary stored successfully");
+  
       } catch (error) {
-        console.error("Error storing call summary:", error);
+        console.error("Error storing call summary:", error.message);
       }
-    }, 10000); // Wait 10 seconds before hitting backend
+    }, 10000); // wait 10s after assistant stops
   };
-
-  const showForm = !loading && !started && !finished;
-  const allFieldsFilled = motherAge && childAge && healthProblems && feedingConcerns && vaccinationHistory;
+  
 
   return (
     <div className="min-h-screen bg-gray-100 flex flex-col items-center justify-center px-4 py-8">
-      {showForm && (
-        <div className="bg-white rounded-lg shadow-md p-6 w-full max-w-md space-y-4">
-          <h1 className="text-2xl font-bold text-gray-800 text-center">Mother & Child Care Details</h1>
-          <input
-            type="number"
-            placeholder="Mother's Age"
-            value={motherAge}
-            onChange={handleInputChange(setMotherAge)}
-            className="w-full px-4 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-400"
-          />
-          <input
-            type="number"
-            placeholder="Child's Age"
-            value={childAge}
-            onChange={handleInputChange(setChildAge)}
-            className="w-full px-4 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-400"
-          />
-          <textarea
-            placeholder="Health Problems (if any)"
-            value={healthProblems}
-            onChange={handleInputChange(setHealthProblems)}
-            className="w-full px-4 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-400"
-          />
-          <textarea
-            placeholder="Feeding Concerns (e.g., breastfeeding, formula)"
-            value={feedingConcerns}
-            onChange={handleInputChange(setFeedingConcerns)}
-            className="w-full px-4 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-400"
-          />
-          <textarea
-            placeholder="Vaccination History (if any)"
-            value={vaccinationHistory}
-            onChange={handleInputChange(setVaccinationHistory)}
-            className="w-full px-4 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-400"
-          />
-          <button
-            onClick={handleStart}
-            disabled={!allFieldsFilled}
-            className={`w-full py-2 rounded-md text-white font-semibold ${
-              allFieldsFilled
-                ? 'bg-blue-600 hover:bg-blue-700 transition'
-                : 'bg-gray-400 cursor-not-allowed'
-            }`}
-          >
-            Start Call
-          </button>
-        </div>
-      )}
-
-      {showThankYou && (
-        <div className="bg-white rounded-lg shadow-md p-6 w-full max-w-md mt-6 text-center">
-          <h2 className="text-xl font-semibold text-blue-700 mb-2">Thank you for interacting with the assistant!</h2>
-          <p className="text-gray-500 mt-1">You may now close this window.</p>
-        </div>
-      )}
-
       {loading && (
-        <div className="text-blue-600 text-lg font-medium mt-4">Preparing your Call...</div>
+        <div className="text-blue-600 text-lg font-medium mt-4">
+          Preparing your Care Session...
+        </div>
       )}
 
       {started && (
@@ -233,8 +137,17 @@ function ChatBot() {
           />
         </div>
       )}
+
+      {showThankYou && (
+        <div className="bg-white rounded-lg shadow-md p-6 w-full max-w-md mt-6 text-center">
+          <h2 className="text-xl font-semibold text-blue-700 mb-2">Thank you for interacting with the assistant!</h2>
+          <p className="text-gray-500 mt-1">You may now close this window.</p>
+        </div>
+      )}
     </div>
   );
 }
 
 export default ChatBot;
+
+

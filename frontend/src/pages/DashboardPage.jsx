@@ -8,8 +8,6 @@ export default function DashboardPage() {
   const [loading, setLoading] = useState(true);
   const [loadingProviders, setLoadingProviders] = useState(false);
   const [showProvidersModal, setShowProvidersModal] = useState(false);
-
-  // New states for immunization summary modal
   const [showImmunizationModal, setShowImmunizationModal] = useState(false);
   const [immunizationSummary, setImmunizationSummary] = useState(null);
   const [loadingSummary, setLoadingSummary] = useState(false);
@@ -17,25 +15,22 @@ export default function DashboardPage() {
   const navigate = useNavigate();
 
   useEffect(() => {
-
     const token = localStorage.getItem("token");
     const userEmail = localStorage.getItem("userEmail");
 
     if (!token || !userEmail) {
-      navigate("/login");
+      setTimeout(() => navigate("/login", { replace: true }), 0);
       return;
     }
 
     const fetchData = async () => {
       try {
-        // Fetch summaries
         const summariesResponse = await fetch("http://localhost:8000/summaries/", {
           headers: { Authorization: `Bearer ${token}` }
         });
         const summariesData = await summariesResponse.json();
         if (!summariesResponse.ok) throw new Error(summariesData.detail || "Failed to fetch summaries");
 
-        // Fetch upcoming vaccines
         const vaccinesResponse = await fetch("http://localhost:8000/upcoming-vaccines", {
           headers: { Authorization: `Bearer ${token}` }
         });
@@ -76,38 +71,40 @@ export default function DashboardPage() {
   };
 
   const fetchImmunizationSummary = async () => {
-  const token = localStorage.getItem("token");
-  setLoadingSummary(true);
-  setImmunizationSummary(null);
-  try {
-    const res = await fetch("http://localhost:8000/immunization-summary", {
-      headers: { Authorization: `Bearer ${token}` }
-    });
-    if (!res.ok) throw new Error("Failed to fetch immunization summary");
-    const data = await res.json();
-    setImmunizationSummary(data);
-    setShowImmunizationModal(true);
-  } catch (error) {
-    alert(error.message);
-  } finally {
-    setLoadingSummary(false);
-  }
-};
+    const token = localStorage.getItem("token");
+    setLoadingSummary(true);
+    setImmunizationSummary(null);
+    try {
+      const res = await fetch("http://localhost:8000/immunization-summary", {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      if (!res.ok) throw new Error("Failed to fetch immunization summary");
+      const data = await res.json();
+      setImmunizationSummary(data);
+      setShowImmunizationModal(true);
+    } catch (error) {
+      alert(error.message);
+    } finally {
+      setLoadingSummary(false);
+    }
+  };
 
   const navigateToChatBot = () => {
     const userEmail = localStorage.getItem("userEmail");
-    navigate('/care', { state: { userEmail } });
+    navigate('/care');
   };
 
   const handleLogout = () => {
-    localStorage.removeItem("token");
-    localStorage.removeItem("userEmail");
-    localStorage.removeItem("role");
-    navigate("/login");
+    localStorage.clear(); // clears all keys (token, email, role
+    navigate("/login", { replace: true });
   };
 
   if (loading) {
-    return <div className="text-center mt-10 text-lg text-gray-700">Loading data...</div>;
+    return (
+      <div className="text-center mt-10 text-lg text-gray-700">
+        Loading data...
+      </div>
+    );
   }
 
   return (
@@ -167,17 +164,18 @@ export default function DashboardPage() {
       <section className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
         {summaries.map((entry) => (
           <div
-            key={entry.call_id}
-            className="bg-white text-gray-800 rounded-xl shadow-md p-5 border border-gray-200 transition hover:shadow-lg flex flex-col justify-between"
-          >
-            <div className="flex justify-between text-sm text-gray-600 font-medium mb-4 border-b pb-2">
-              <p>{new Date(entry.startedAt).toLocaleDateString()}</p>
-              <p>{new Date(entry.startedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</p>
-            </div>
-            <div className="text-gray-700 text-sm whitespace-pre-wrap">
-              {entry.summary || "No summary available."}
-            </div>
+          key={entry.call_id}
+          className="bg-white text-gray-800 rounded-xl shadow-md p-5 border border-gray-200 hover:shadow-lg flex flex-col"
+        >
+          <div className="flex justify-between text-sm text-gray-600 font-medium border-b pb-2 mb-4">
+            <p>{new Date(entry.startedAt).toLocaleDateString()}</p>
+            <p>{new Date(entry.startedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</p>
           </div>
+          <div className="text-gray-700 text-sm whitespace-pre-wrap text-center">
+            {entry.summary || "No summary available."}
+          </div>
+        </div>
+        
         ))}
       </section>
 
@@ -232,34 +230,34 @@ export default function DashboardPage() {
 
       {/* Immunization Summary Modal */}
       {showImmunizationModal && (
-  <div
-    className="fixed inset-0 bg-black bg-opacity-40 backdrop-blur-sm flex justify-center items-center p-4 z-50"
-    onClick={() => setShowImmunizationModal(false)}
-  >
-    <div
-      className="bg-white rounded-lg p-6 max-w-lg w-full shadow-lg"
-      onClick={(e) => e.stopPropagation()}
-    >
-      <h3 className="text-xl font-semibold mb-4">Vaccination History Summary</h3>
-      {immunizationSummary ? (
-        <>
-          <p className="mb-2">
-            <strong>Child:</strong> {immunizationSummary.first_name} {immunizationSummary.last_name}
-          </p>
-          <p className="whitespace-pre-wrap">{immunizationSummary.summary}</p>
-        </>
-      ) : (
-        <p>Loading summary...</p>
+        <div
+          className="fixed inset-0 bg-black bg-opacity-40 backdrop-blur-sm flex justify-center items-center p-4 z-50"
+          onClick={() => setShowImmunizationModal(false)}
+        >
+          <div
+            className="bg-white rounded-lg p-6 max-w-lg w-full shadow-lg"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <h3 className="text-xl font-semibold mb-4">Vaccination History Summary</h3>
+            {immunizationSummary ? (
+              <>
+                <p className="mb-2">
+                  <strong>Child:</strong> {immunizationSummary.first_name} {immunizationSummary.last_name}
+                </p>
+                <p className="whitespace-pre-wrap">{immunizationSummary.summary}</p>
+              </>
+            ) : (
+              <p>Loading summary...</p>
+            )}
+            <button
+              onClick={() => setShowImmunizationModal(false)}
+              className="mt-6 bg-green-600 text-white px-4 py-2 rounded hover:bg-green-700 transition"
+            >
+              Close
+            </button>
+          </div>
+        </div>
       )}
-      <button
-        onClick={() => setShowImmunizationModal(false)}
-        className="mt-6 bg-green-600 text-white px-4 py-2 rounded hover:bg-green-700 transition"
-      >
-        Close
-      </button>
-    </div>
-  </div>
-)}
     </main>
   );
 }
