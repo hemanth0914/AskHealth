@@ -86,7 +86,7 @@ function ChatBot() {
             "Authorization": "Bearer 44575b30-be10-41f3-9cb3-af859aec0678"
           },
         });
-  
+        
         const callDetails = await callDetailsResponse.json();
         if (!callDetailsResponse.ok) throw new Error("Failed to fetch call details");
   

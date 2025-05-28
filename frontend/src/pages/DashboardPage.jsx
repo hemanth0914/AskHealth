@@ -12,6 +12,10 @@ export default function DashboardPage() {
   const [immunizationSummary, setImmunizationSummary] = useState(null);
   const [loadingSummary, setLoadingSummary] = useState(false);
 
+  // Disease outbreak data
+  const [diseaseOutbreak, setDiseaseOutbreak] = useState([]);
+  const [loadingDiseaseOutbreak, setLoadingDiseaseOutbreak] = useState(false);
+
   const navigate = useNavigate();
 
   useEffect(() => {
@@ -50,15 +54,18 @@ export default function DashboardPage() {
     fetchData();
   }, [navigate]);
 
+  // Fetch nearby vaccine providers and open modal
   const fetchNearbyProviders = async () => {
     const token = localStorage.getItem("token");
     setLoadingProviders(true);
     setNearbyProviders([]);
     setShowProvidersModal(true);
+
     try {
       const res = await fetch("http://localhost:8000/child/nearby-providers", {
         headers: { Authorization: `Bearer ${token}` }
       });
+
       if (!res.ok) throw new Error("Failed to fetch providers");
       const data = await res.json();
       setNearbyProviders(data);
@@ -89,15 +96,40 @@ export default function DashboardPage() {
     }
   };
 
+  // Fetch disease outbreaks
+  const fetchDiseaseOutbreak = async () => {
+    const token = localStorage.getItem("token");
+    setLoadingDiseaseOutbreak(true);
+
+    try {
+      const res = await fetch("http://localhost:8000/disease-outbreak", {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+
+      if (!res.ok) throw new Error("Failed to fetch disease outbreaks");
+      const data = await res.json();
+      setDiseaseOutbreak(data);
+    } catch (error) {
+      alert(error.message);
+      setDiseaseOutbreak([]);
+    } finally {
+      setLoadingDiseaseOutbreak(false);
+    }
+  };
+
   const navigateToChatBot = () => {
     const userEmail = localStorage.getItem("userEmail");
     navigate('/care');
   };
 
   const handleLogout = () => {
-    localStorage.clear(); // clears all keys (token, email, role
+    localStorage.clear();
     navigate("/login", { replace: true });
   };
+
+  useEffect(() => {
+    fetchDiseaseOutbreak();  // Fetch disease outbreaks as soon as the page loads
+  }, []);
 
   if (loading) {
     return (
@@ -129,19 +161,17 @@ export default function DashboardPage() {
           <p className="text-gray-600">No upcoming vaccinations scheduled.</p>
         ) : (
           <ul className="space-y-3">
-            {upcomingVaccines.map(({ first_name, last_name, vaccine_name, next_due_date }, idx) => (
+            {upcomingVaccines.map(({ vaccine_name, dose_number, due_date }, idx) => (
               <li
                 key={idx}
-                className="p-3 border rounded-md bg-blue-50 flex justify-between items-center cursor-pointer hover:bg-blue-100"
-                onClick={fetchNearbyProviders}
-                title="Click to see nearby providers"
+                className="p-3 border rounded-md bg-blue-50 flex justify-between items-center"
               >
                 <div>
-                  <p className="font-medium text-gray-900">{first_name} {last_name}</p>
-                  <p className="text-sm text-gray-700">Vaccine: {vaccine_name}</p>
+                  <p className="font-medium text-gray-900">{vaccine_name}</p>
+                  <p className="text-sm text-gray-700">Dose: {dose_number}</p>
                 </div>
                 <span className="text-sm text-blue-700 font-semibold">
-                  Due on {new Date(next_due_date).toLocaleDateString()}
+                  Due on {new Date(due_date).toLocaleDateString()}
                 </span>
               </li>
             ))}
@@ -149,33 +179,43 @@ export default function DashboardPage() {
         )}
       </section>
 
-      {/* Vaccination History Summary Button */}
-      <div className="mb-8 text-center">
-        <button
-          onClick={fetchImmunizationSummary}
-          disabled={loadingSummary}
-          className="px-6 py-3 bg-green-600 text-white rounded-lg text-lg font-medium hover:bg-green-700 transition"
-        >
-          {loadingSummary ? "Loading Summary..." : "Show Vaccination History Summary"}
-        </button>
-      </div>
+      {/* Disease Outbreak Section */}
+      <section className="mb-12 bg-white rounded-xl shadow-lg p-8 border border-gray-300">
+        <h2 className="text-2xl font-semibold mb-6 text-gray-800">Disease Outbreaks in the Last 30 Days</h2>
+        
+        {loadingDiseaseOutbreak ? (
+          <p className="mt-4 text-gray-500 text-lg">Loading outbreaks...</p>
+        ) : diseaseOutbreak.length > 0 ? (
+          <ul className="space-y-5 mt-4">
+            {diseaseOutbreak.map(({ disease, count }, idx) => (
+              <li key={idx} className="p-6 border rounded-xl bg-indigo-50 shadow-md hover:shadow-lg transition">
+                <h3 className="text-3xl font-bold text-red-500">{disease}</h3>
+                <p className="text-lg text-gray-700 mt-2">Cases: <span className="font-semibold">{count}</span></p>
+                <p className="text-sm text-gray-600 mt-3">Side Effects: Common side effects include fever, headaches, fatigue, and muscle pain.</p>
+              </li>
+            ))}
+          </ul>
+        ) : (
+          <p className="mt-4 text-gray-500 text-lg">No significant outbreaks found.</p>
+        )}
+      </section>
+
 
       {/* Summaries Section */}
       <section className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
         {summaries.map((entry) => (
           <div
-          key={entry.call_id}
-          className="bg-white text-gray-800 rounded-xl shadow-md p-5 border border-gray-200 hover:shadow-lg flex flex-col"
-        >
-          <div className="flex justify-between text-sm text-gray-600 font-medium border-b pb-2 mb-4">
-            <p>{new Date(entry.startedAt).toLocaleDateString()}</p>
-            <p>{new Date(entry.startedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</p>
+            key={entry.call_id}
+            className="bg-white text-gray-800 rounded-xl shadow-md p-5 border border-gray-200 hover:shadow-lg flex flex-col"
+          >
+            <div className="flex justify-between text-sm text-gray-600 font-medium border-b pb-2 mb-4">
+              <p>{new Date(entry.startedAt).toLocaleDateString()}</p>
+              <p>{new Date(entry.startedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</p>
+            </div>
+            <div className="text-gray-700 text-sm whitespace-pre-wrap text-center">
+              {entry.summary || "No summary available."}
+            </div>
           </div>
-          <div className="text-gray-700 text-sm whitespace-pre-wrap text-center">
-            {entry.summary || "No summary available."}
-          </div>
-        </div>
-        
         ))}
       </section>
 
@@ -258,6 +298,16 @@ export default function DashboardPage() {
           </div>
         </div>
       )}
+
+      {/* 🟣 Floating Ask Assistant Button */}
+      <button
+        onClick={() => navigate('/ask')}
+        className="fixed bottom-6 right-6 bg-purple-600 text-white rounded-full p-4 shadow-lg hover:bg-purple-700 transition z-50"
+        title="Ask the Assistant"
+      >
+        💬 Ask Assistant
+      </button>
     </main>
   );
 }
+

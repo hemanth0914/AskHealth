@@ -5,6 +5,8 @@ import DashboardPage from './pages/DashboardPage';
 import ChatBotPage from './pages/ChatbotPage';
 import Login from './pages/Login';
 import Signup from './pages/Signup';
+import QueryAssistantPage from './pages/QueryAssistantPage';
+
 
 function App() {
   const [role, setRole] = useState(null);
@@ -39,6 +41,10 @@ function App() {
         <Route
           path="/signup"
           element={!role ? <Signup /> : <Navigate to="/dashboard" replace />}
+        />
+        <Route
+          path="/ask"
+          element={role === 'customer' ? <QueryAssistantPage /> : <Navigate to="/login" replace />}
         />
       </Routes>
     </Router>
