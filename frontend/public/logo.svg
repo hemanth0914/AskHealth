@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="120" height="120" viewBox="0 0 120 120">
+  <g fill="none" stroke="#008080" stroke-width="4">
+    <path d="M40 60c0-11 9-20 20-20s20 9 20 20-9 20-20 20-20-9-20-20z"/>
+    <path d="M60 80v20M60 40V20"/>
+    <path d="M40 60H20M100 60H80"/>
+  </g>
+  <text x="60" y="110" font-size="10" text-anchor="middle" fill="#333" font-family="Arial, sans-serif">HEALTH ASSISTANT</text>
+</svg>
