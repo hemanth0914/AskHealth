@@ -130,7 +130,7 @@ function ChatBot() {
             Authorization: `Bearer ${token}`,
           },
           body: JSON.stringify({
-            id: callId,
+            call_id: callId,
             summary: callDetails.summary || "",
             startedAt: callDetails.startedAt,
             endedAt: callDetails.endedAt,
@@ -148,6 +148,43 @@ function ChatBot() {
         }
 
         console.log("✅ Summary stored successfully");
+
+        // Analyze symptoms from transcript
+        if (callDetails.transcript) {
+          const analyzeResponse = await fetch("http://localhost:8000/analyze-symptoms", {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              Authorization: `Bearer ${token}`,
+            },
+            body: JSON.stringify({
+              transcript: callDetails.transcript,
+              userId: callId,
+              callId: callId
+            }),
+          });
+
+          if (!analyzeResponse.ok) {
+            throw new Error("Failed to analyze symptoms");
+          }
+
+          // Check for potential health risks
+          const healthAlertsResponse = await fetch("http://localhost:8000/check-health-alerts", {
+            method: "POST",
+            headers: {
+              Authorization: `Bearer ${token}`,
+            },
+          });
+
+          if (!healthAlertsResponse.ok) {
+            throw new Error("Failed to check health alerts");
+          }
+
+          const alertsData = await healthAlertsResponse.json();
+          if (alertsData.alerts && alertsData.alerts.length > 0) {
+            console.log("🚨 Health alerts detected:", alertsData.alerts);
+          }
+        }
       } catch (error) {
         console.error("Error storing call summary:", error.message);
       }
@@ -155,50 +192,63 @@ function ChatBot() {
   };
 
   return (
-    <main className="min-h-screen bg-[#f5f5f7]">
-      {/* Apple-style sticky header */}
-      <header className="sticky top-0 z-50 bg-[#f5f5f7]/80 backdrop-blur-xl">
+    <main className="min-h-screen bg-gradient-to-b from-[#f5f5f7] to-[#fff]">
+      {/* Refined Apple-style header with blur effect */}
+      <header className="sticky top-0 z-50 bg-[#f5f5f7]/80 backdrop-blur-xl border-b border-[#86868b]/10">
         <nav className="max-w-[980px] mx-auto px-6">
-          <div className="flex items-center justify-between h-[48px]">
-            <h1 className="text-[17px] font-semibold text-[#1d1d1f]">
+          <div className="flex items-center justify-between h-[44px]">
+            <h1 className="text-[17px] font-semibold text-[#1d1d1f] tracking-tight">
               Healthcare Assistant
             </h1>
+            {started && (
+              <button
+                onClick={handleStop}
+                className="text-[13px] font-medium text-[#0071e3] hover:text-[#0077ed] transition-colors"
+              >
+                End Session
+              </button>
+            )}
           </div>
         </nav>
       </header>
 
       <div className="max-w-[980px] mx-auto px-6 py-12">
-        <div className="flex flex-col items-center">
+        <div className="flex flex-col items-center space-y-6">
+          {/* Loading State with Apple-style animations */}
           {loading && (
-            <div className="w-full max-w-lg">
-              <div className="bg-white/80 backdrop-blur-xl rounded-2xl border border-[#86868b]/10 shadow-sm p-8 animate-fade-in">
+            <div className="w-full max-w-lg transform transition-all duration-700 ease-out">
+              <div className="bg-white/90 backdrop-blur-xl rounded-2xl border border-[#86868b]/10 shadow-lg p-8 animate-float">
                 <div className="flex flex-col items-center text-center">
-                  <div className="w-16 h-16 mb-6 relative">
-                    <div className="absolute inset-0 bg-[#0071e3] rounded-full opacity-20 animate-ping"></div>
+                  <div className="w-16 h-16 mb-8 relative">
+                    <div className="absolute inset-0 bg-[#0071e3] rounded-full opacity-20 animate-pulse"></div>
                     <div className="relative w-full h-full border-2 border-[#0071e3]/30 border-t-[#0071e3] rounded-full animate-spin"></div>
                   </div>
-                  <h2 className="text-[28px] font-semibold text-[#1d1d1f] mb-4">
+                  <h2 className="text-[28px] font-semibold text-[#1d1d1f] mb-6 tracking-tight">
                     Preparing Your Care Session
                   </h2>
-                  <div className="space-y-2">
-                    <p className={`text-[15px] ${initializationStep >= 1 ? 'text-[#1d1d1f]' : 'text-[#86868b]'}`}>
-                      ○ Initializing assistant...
-                    </p>
-                    <p className={`text-[15px] ${initializationStep >= 2 ? 'text-[#1d1d1f]' : 'text-[#86868b]'}`}>
-                      ○ Loading conversation history...
-                    </p>
-                    <p className={`text-[15px] ${initializationStep >= 3 ? 'text-[#1d1d1f]' : 'text-[#86868b]'}`}>
-                      ○ Establishing secure connection...
-                    </p>
+                  <div className="space-y-4">
+                    <div className={`flex items-center space-x-3 transition-all duration-500 ${initializationStep >= 1 ? 'opacity-100' : 'opacity-50'}`}>
+                      <div className={`w-2 h-2 rounded-full ${initializationStep >= 1 ? 'bg-[#0071e3]' : 'bg-[#86868b]'}`} />
+                      <p className="text-[15px] text-[#1d1d1f]">Initializing assistant</p>
+                    </div>
+                    <div className={`flex items-center space-x-3 transition-all duration-500 ${initializationStep >= 2 ? 'opacity-100' : 'opacity-50'}`}>
+                      <div className={`w-2 h-2 rounded-full ${initializationStep >= 2 ? 'bg-[#0071e3]' : 'bg-[#86868b]'}`} />
+                      <p className="text-[15px] text-[#1d1d1f]">Loading conversation history</p>
+                    </div>
+                    <div className={`flex items-center space-x-3 transition-all duration-500 ${initializationStep >= 3 ? 'opacity-100' : 'opacity-50'}`}>
+                      <div className={`w-2 h-2 rounded-full ${initializationStep >= 3 ? 'bg-[#0071e3]' : 'bg-[#86868b]'}`} />
+                      <p className="text-[15px] text-[#1d1d1f]">Establishing secure connection</p>
+                    </div>
                   </div>
                 </div>
               </div>
             </div>
           )}
 
+          {/* Active Call State with enhanced visuals */}
           {started && (
-            <div className="w-full max-w-lg animate-fade-in">
-              <div className="bg-white/80 backdrop-blur-xl rounded-2xl border border-[#86868b]/10 shadow-sm p-8">
+            <div className="w-full max-w-lg transform transition-all duration-700 ease-out animate-float">
+              <div className="bg-white/90 backdrop-blur-xl rounded-2xl border border-[#86868b]/10 shadow-lg p-8">
                 <ActiveCallDetails
                   assistantIsSpeaking={assistantIsSpeaking}
                   volumeLevel={volumeLevel}
@@ -208,19 +258,22 @@ function ChatBot() {
             </div>
           )}
 
+          {/* Thank You State with refined animations */}
           {showThankYou && (
-            <div className="w-full max-w-lg mt-6 animate-fade-in">
-              <div className="bg-white/80 backdrop-blur-xl rounded-2xl border border-[#86868b]/10 shadow-sm p-8 text-center">
-                <div className="w-16 h-16 mx-auto mb-6 bg-[#0071e3] rounded-full flex items-center justify-center">
-                  <svg className="w-8 h-8 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <div className="w-full max-w-lg transform transition-all duration-700 ease-out animate-float">
+              <div className="bg-white/90 backdrop-blur-xl rounded-2xl border border-[#86868b]/10 shadow-lg p-8 text-center">
+                <div className="w-20 h-20 mx-auto mb-8 bg-gradient-to-br from-[#0071e3] to-[#0077ed] rounded-full flex items-center justify-center animate-bounce-subtle">
+                  <svg className="w-10 h-10 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
                   </svg>
                 </div>
-                <h2 className="text-[28px] font-semibold text-[#1d1d1f] mb-4">
-                  Thank You!
+                <h2 className="text-[32px] font-semibold text-[#1d1d1f] mb-4 tracking-tight">
+                  Thank You
                 </h2>
-                <p className="text-[17px] text-[#86868b]">
-                  Your care session has been completed successfully. Redirecting you to the dashboard...
+                <p className="text-[17px] text-[#86868b] leading-relaxed">
+                  Your care session has been completed successfully. 
+                  <br />
+                  Redirecting you to the dashboard...
                 </p>
               </div>
             </div>
@@ -228,32 +281,40 @@ function ChatBot() {
         </div>
       </div>
 
-      {/* Apple-style animations */}
+      {/* Enhanced animations */}
       <style jsx>{`
-        @keyframes fade-in {
-          from {
-            opacity: 0;
+        @keyframes float {
+          0% {
             transform: translateY(10px);
-          }
-          to {
-            opacity: 1;
-            transform: translateY(0);
-          }
-        }
-
-        @keyframes ping {
-          75%, 100% {
-            transform: scale(2);
             opacity: 0;
           }
+          100% {
+            transform: translateY(0);
+            opacity: 1;
+          }
         }
 
-        .animate-fade-in {
-          animation: fade-in 0.7s cubic-bezier(0.41, 0, 0.22, 1);
+        @keyframes bounce-subtle {
+          0%, 100% {
+            transform: translateY(-5%);
+          }
+          50% {
+            transform: translateY(5%);
+          }
         }
 
-        .animate-ping {
-          animation: ping 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+        .animate-float {
+          animation: float 0.8s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+        }
+
+        .animate-bounce-subtle {
+          animation: bounce-subtle 2s ease-in-out infinite;
+        }
+
+        .transition-all {
+          transition-property: all;
+          transition-timing-function: cubic-bezier(0.16, 1, 0.3, 1);
+          transition-duration: 0.5s;
         }
       `}</style>
     </main>
