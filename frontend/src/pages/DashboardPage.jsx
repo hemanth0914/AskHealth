@@ -608,52 +608,100 @@ export default function DashboardPage({ onLogout }) {
         {/* Health Alerts Section */}
         {healthAlerts.length > 0 && (
           <section className="mb-8">
-            <div className="bg-white/80 backdrop-blur-xl rounded-2xl border border-red-200/50 p-6">
-              <h2 className="text-xl font-semibold text-red-600 mb-4 flex items-center">
-                <svg className="w-6 h-6 mr-2" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
-                </svg>
-                Health Alerts
-              </h2>
-              <div className="space-y-4">
-                {healthAlerts.map((alert, index) => (
-                  <div key={index} className="bg-red-50 rounded-xl p-4">
-                    <div className="flex items-start">
-                      <div className="flex-shrink-0">
-                        <svg className="h-6 w-6 text-red-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
-                        </svg>
-                      </div>
-                      <div className="ml-3 flex-1">
-                        <h3 className="text-lg font-medium text-red-800">
-                          Potential {alert.disease} Detected
-                        </h3>
-                        <div className="mt-2 text-red-700">
-                          <p className="text-sm">
-                            Confidence: {alert.confidence}%
-                          </p>
-                          {alert.matching_symptoms && alert.matching_symptoms.length > 0 && (
-                            <div className="mt-2">
-                              <p className="text-sm font-medium mb-1">Matching symptoms:</p>
-                              <ul className="list-disc list-inside text-sm space-y-1">
-                                {alert.matching_symptoms.map((symptom, idx) => (
-                                  <li key={idx} className="ml-2">
-                                    {symptom.name}
-                                    {symptom.severity && ` (${symptom.severity})`}
-                                    {symptom.duration && ` - Duration: ${symptom.duration}`}
-                                  </li>
+            <div className="bg-gradient-to-r from-red-50 to-orange-50 backdrop-blur-xl rounded-2xl border border-red-100 p-6">
+              <div className="flex items-center justify-between mb-6">
+                <div className="flex items-center">
+                  <div className="w-10 h-10 flex items-center justify-center rounded-full bg-red-100">
+                    <svg className="w-6 h-6 text-red-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+                    </svg>
+                  </div>
+                  <h2 className="text-xl font-semibold text-gray-900 ml-3">Active Health Alerts</h2>
+                </div>
+                <span className="px-3 py-1 text-sm font-medium text-red-800 bg-red-100 rounded-full">
+                  {healthAlerts.length} {healthAlerts.length === 1 ? 'Alert' : 'Alerts'}
+                </span>
+              </div>
+
+              <div className="grid gap-4">
+                {healthAlerts.map((alert, index) => {
+                  // Get unique symptoms
+                  const uniqueSymptoms = [...new Set(
+                    alert.matching_symptoms
+                      .map(s => s.name)
+                      .filter(Boolean)
+                  )];
+
+                  return (
+                    <div 
+                      key={index} 
+                      className="bg-white rounded-xl p-6 shadow-sm hover:shadow-md transition-all duration-300"
+                    >
+                      <div className="flex items-start justify-between">
+                        <div className="flex-1">
+                          <div className="flex items-center">
+                            <h3 className="text-lg font-semibold text-gray-900">
+                              {alert.disease}
+                            </h3>
+                            <div className="ml-3 flex items-center">
+                              <div className={`w-2 h-2 rounded-full ${
+                                alert.confidence >= 90 ? 'bg-red-500' :
+                                alert.confidence >= 80 ? 'bg-orange-500' :
+                                'bg-yellow-500'
+                              }`} />
+                              <span className="ml-2 text-sm font-medium text-gray-600">
+                                {alert.confidence}% match
+                              </span>
+                            </div>
+                          </div>
+
+                          {uniqueSymptoms.length > 0 && (
+                            <div className="mt-3">
+                              <div className="flex flex-wrap gap-2">
+                                {uniqueSymptoms.map((symptom, idx) => (
+                                  <span 
+                                    key={idx}
+                                    className="inline-flex items-center px-2.5 py-1 rounded-full text-xs font-medium bg-red-50 text-red-700 border border-red-100"
+                                  >
+                                    {symptom}
+                                  </span>
                                 ))}
-                              </ul>
+                              </div>
                             </div>
                           )}
-                          <p className="text-sm mt-2 font-medium">
-                            {alert.recommendation}
-                          </p>
+
+                          <div className="mt-4">
+                            <div className={`text-sm font-medium ${
+                              alert.confidence >= 90 ? 'text-red-700' :
+                              alert.confidence >= 80 ? 'text-orange-700' :
+                              'text-yellow-700'
+                            }`}>
+                              {alert.recommendation}
+                            </div>
+                          </div>
+                        </div>
+
+                        <button 
+                          className="ml-4 p-2 text-gray-400 hover:text-gray-600 transition-colors duration-200"
+                          onClick={() => {/* Add action to dismiss or view more details */}}
+                        >
+                          <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 12h.01M12 12h.01M19 12h.01M6 12a1 1 0 11-2 0 1 1 0 012 0zm7 0a1 1 0 11-2 0 1 1 0 012 0zm7 0a1 1 0 11-2 0 1 1 0 012 0z" />
+                          </svg>
+                        </button>
+                      </div>
+
+                      <div className="mt-4 pt-4 border-t border-gray-100">
+                        <div className="flex items-center text-sm text-gray-500">
+                          <svg className="w-4 h-4 mr-1.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
+                          </svg>
+                          Reported: {new Date(alert.created_at).toLocaleDateString()}
                         </div>
                       </div>
                     </div>
-                  </div>
-                ))}
+                  );
+                })}
               </div>
             </div>
           </section>
@@ -923,8 +971,8 @@ export default function DashboardPage({ onLogout }) {
                     <VaccinationSummary
                       patientName={`${immunizationSummary.first_name} ${immunizationSummary.last_name}`}
                       summary={immunizationSummary.summary}
-                      completed_count={immunizationSummary.completed_count}
-                      upcoming_count={immunizationSummary.upcoming_count}
+                      completed_count={immunizationSummary.statistics.completed_count}
+                      upcoming_count={immunizationSummary.statistics.upcoming_count}
                     />
                   ) : (
                     <div className="text-center py-8">
@@ -1069,7 +1117,7 @@ export default function DashboardPage({ onLogout }) {
                               <button
                                 type="button"
                                 onClick={() => setShowScheduleSection(false)}
-                                className="inline-flex justify-center px-4 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-md shadow-sm hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500"
+                                className="inline-flex justify-center px-4 py-2 text-gray-700 bg-white border border-gray-300 rounded-md shadow-sm hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500"
                               >
                                 Cancel
                               </button>
@@ -1077,7 +1125,7 @@ export default function DashboardPage({ onLogout }) {
                                 type="button"
                                 onClick={submitAppointment}
                                 disabled={scheduleSubmitting}
-                                className="inline-flex justify-center px-4 py-2 text-sm font-medium text-white bg-blue-600 border border-transparent rounded-md shadow-sm hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 disabled:opacity-50"
+                                className="inline-flex justify-center px-4 py-2 text-white bg-blue-600 border border-transparent rounded-md shadow-sm hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 disabled:opacity-50"
                               >
                                 {scheduleSubmitting ? (
                                   <>

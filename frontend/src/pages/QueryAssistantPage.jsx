@@ -5,7 +5,7 @@ const SAMPLE_QUESTIONS = [
   {
     id: 1,
     question: "What vaccines are due for my child?",
-    answer: "Based on your child's records, the following vaccines are due:\n\n• MMR (Measles, Mumps, Rubella) - Due in 2 weeks\n• DTaP (Diphtheria, Tetanus, Pertussis) - Due next month\n\nPlease consult with your healthcare provider to schedule these vaccinations."
+    answer: "Based on your child's records, the following vaccines are due:\n\n• HepB (Hepatitis B) - Due in 2 weeks\n• Rotavirus - Due in 2 weeks\n• Covid20 (Coronavirus Disease 2020) - Due in 2 weeks\n\nPlease consult with your healthcare provider to schedule these vaccinations."
   },
   {
     id: 2,
@@ -15,7 +15,7 @@ const SAMPLE_QUESTIONS = [
   {
     id: 3,
     question: "When is my next appointment?",
-    answer: "Your next scheduled appointments are:\n\n• Dr. Smith (Pediatrician) - March 15, 2024 at 10:30 AM\n• Dental Checkup - April 2, 2024 at 2:00 PM\n\nBoth appointments are confirmed and reminders will be sent 24 hours before."
+    answer: "Your next scheduled appointments is:\n\n• Healthy - June 19, 2025 at 10:30 AM\n\n\nAppointments are confirmed and reminders will be sent 24 hours before."
   },
   {
     id: 4,
