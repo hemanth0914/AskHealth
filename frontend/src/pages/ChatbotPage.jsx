@@ -1,7 +1,87 @@
-import { useState, useEffect } from "react";
+import React, { useState, useEffect } from "react";
 import { vapi, startAssistant, stopAssistant } from "../ai";
 import ActiveCallDetails from "../call/ActiveCallDetails";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, useBeforeUnload } from "react-router-dom";
+
+// Common symptom patterns to look for in the transcript
+const SYMPTOM_PATTERNS = [
+  { name: "fever", keywords: ["fever", "temperature", "hot", "chills"] },
+  { name: "cough", keywords: ["cough", "coughing", "dry cough", "wet cough"] },
+  { name: "headache", keywords: ["headache", "head pain", "migraine"] },
+  { name: "sore throat", keywords: ["sore throat", "throat pain", "difficulty swallowing"] },
+  { name: "runny nose", keywords: ["runny nose", "nasal congestion", "stuffy nose"] },
+  { name: "fatigue", keywords: ["fatigue", "tired", "exhausted", "low energy"] },
+  { name: "body ache", keywords: ["body ache", "muscle pain", "joint pain"] },
+  { name: "nausea", keywords: ["nausea", "vomiting", "sick to stomach"] },
+  { name: "diarrhea", keywords: ["diarrhea", "loose stool"] },
+  { name: "shortness of breath", keywords: ["shortness of breath", "difficulty breathing", "breathless"] }
+];
+
+// Severity patterns to look for
+const SEVERITY_PATTERNS = {
+  high: ["severe", "intense", "very", "extremely", "worst", "unbearable"],
+  moderate: ["moderate", "medium", "somewhat", "quite"],
+  mild: ["mild", "slight", "little", "minor"]
+};
+
+// Duration patterns to look for
+const DURATION_PATTERNS = [
+  /(\d+)\s*(day|days|week|weeks|hour|hours)/i,
+  /(few|couple of|several)\s*(day|days|week|weeks|hour|hours)/i,
+  /(since|for)\s*(yesterday|morning|afternoon|evening|tonight)/i
+];
+
+function extractSymptomsFromTranscript(transcript) {
+  const symptoms = [];
+  const lowerTranscript = transcript.toLowerCase();
+
+  // Helper function to find severity
+  const findSeverity = (context) => {
+    for (const [level, patterns] of Object.entries(SEVERITY_PATTERNS)) {
+      if (patterns.some(pattern => context.includes(pattern))) {
+        return level;
+      }
+    }
+    return null;
+  };
+
+  // Helper function to find duration
+  const findDuration = (context) => {
+    for (const pattern of DURATION_PATTERNS) {
+      const match = context.match(pattern);
+      if (match) {
+        return match[0];
+      }
+    }
+    return null;
+  };
+
+  // Check for each symptom pattern
+  SYMPTOM_PATTERNS.forEach(symptomPattern => {
+    for (const keyword of symptomPattern.keywords) {
+      if (lowerTranscript.includes(keyword)) {
+        // Get the context (20 words before and after the symptom mention)
+        const words = lowerTranscript.split(/\s+/);
+        const keywordIndex = words.findIndex(word => word.includes(keyword));
+        if (keywordIndex !== -1) {
+          const start = Math.max(0, keywordIndex - 20);
+          const end = Math.min(words.length, keywordIndex + 20);
+          const context = words.slice(start, end).join(" ");
+
+          symptoms.push({
+            name: symptomPattern.name,
+            severity: findSeverity(context),
+            duration: findDuration(context),
+            context: context
+          });
+          break; // Break after finding first mention of this symptom
+        }
+      }
+    }
+  });
+
+  return symptoms;
+}
 
 function ChatBot() {
   const [started, setStarted] = useState(false);
@@ -13,21 +93,59 @@ function ChatBot() {
   const [initializationStep, setInitializationStep] = useState(1);
   const navigate = useNavigate();
 
+  // Handle page refresh/close during active call
   useEffect(() => {
+    const handleBeforeUnload = (e) => {
+      if (started) {
+        e.preventDefault();
+        e.returnValue = "You have an active call. Are you sure you want to leave?";
+        return e.returnValue;
+      }
+    };
+
+    window.addEventListener("beforeunload", handleBeforeUnload);
+    return () => window.removeEventListener("beforeunload", handleBeforeUnload);
+  }, [started]);
+
+  // Block navigation during active call
+  useEffect(() => {
+    const blockNavigation = () => {
+      if (started) {
+        const confirmLeave = window.confirm(
+          "You have an active call. Are you sure you want to leave? The call will be ended."
+        );
+        if (confirmLeave) {
+          stopAssistant();
+          return true;
+        }
+        return false;
+      }
+      return true;
+    };
+
     // Block browser back/forward navigation
     window.history.pushState(null, document.title, window.location.href);
-
-    const onPopState = (e) => {
-      window.history.pushState(null, document.title, window.location.href);
-      alert("Navigation using browser back/forward buttons is disabled on this page.");
+    const handlePopState = (e) => {
+      if (!blockNavigation()) {
+        window.history.pushState(null, document.title, window.location.href);
+      }
     };
 
-    window.addEventListener("popstate", onPopState);
+    window.addEventListener("popstate", handlePopState);
+
+    // Block navigation through router
+    const unblock = navigate((nextLocation) => {
+      if (blockNavigation()) {
+        return true;
+      }
+      return false;
+    });
 
     return () => {
-      window.removeEventListener("popstate", onPopState);
+      window.removeEventListener("popstate", handlePopState);
+      if (unblock) unblock();
     };
-  }, []);
+  }, [started, navigate]);
 
   useEffect(() => {
     vapi
@@ -151,6 +269,9 @@ function ChatBot() {
 
         // Analyze symptoms from transcript
         if (callDetails.transcript) {
+          // Extract symptoms from transcript
+          const symptoms = extractSymptomsFromTranscript(callDetails.transcript);
+          
           const analyzeResponse = await fetch("http://localhost:8000/analyze-symptoms", {
             method: "POST",
             headers: {
@@ -158,14 +279,15 @@ function ChatBot() {
               Authorization: `Bearer ${token}`,
             },
             body: JSON.stringify({
-              transcript: callDetails.transcript,
-              userId: callId,
-              callId: callId
+              callId: callId,
+              symptoms: symptoms
             }),
           });
 
           if (!analyzeResponse.ok) {
-            throw new Error("Failed to analyze symptoms");
+            const errorData = await analyzeResponse.json().catch(() => ({}));
+            console.error("Failed to analyze symptoms:", errorData);
+            throw new Error("Failed to analyze symptoms: " + (errorData.detail || "Unknown error"));
           }
 
           // Check for potential health risks

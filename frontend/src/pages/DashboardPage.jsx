@@ -44,46 +44,92 @@ export default function DashboardPage({ onLogout }) {
   const [healthAlerts, setHealthAlerts] = useState([]);
   const [loadingAlerts, setLoadingAlerts] = useState(false);
 
+  const [error, setError] = useState(null);
+
+  // Add new state for general appointments
+  const [showGeneralAppointmentModal, setShowGeneralAppointmentModal] = useState(false);
+  const [selectedAlert, setSelectedAlert] = useState(null);
+
+  const [appointmentTime, setAppointmentTime] = useState("09:00");
+
   const navigate = useNavigate();
   const diseaseOutbreakRef = useRef(null);
 
   useEffect(() => {
     const token = localStorage.getItem("token");
-    const userEmail = localStorage.getItem("userEmail");
+    const userType = localStorage.getItem("userType");
+    const username = localStorage.getItem("username");
 
-    if (!token || !userEmail) {
-      setTimeout(() => navigate("/login", { replace: true }), 0);
+    console.log("Auth state:", { token: !!token, userType, username });
+
+    if (!token) {
+      console.log("No token found, redirecting to login");
+      navigate("/login", { replace: true });
       return;
     }
 
     async function fetchData() {
       try {
-        const [summariesRes, vaccinesRes, providersRes] = await Promise.all([
-          fetch("http://localhost:8000/summaries/", {
-            headers: { Authorization: `Bearer ${token}` },
-          }),
-          fetch("http://localhost:8000/upcoming-vaccines", {
-            headers: { Authorization: `Bearer ${token}` },
-          }),
-          fetch("http://localhost:8000/child/nearby-providers", {
-            headers: { Authorization: `Bearer ${token}` },
-          }),
-        ]);
-
-        if (!summariesRes.ok) throw new Error("Failed to fetch summaries");
-        if (!vaccinesRes.ok) throw new Error("Failed to fetch upcoming vaccines");
-        if (!providersRes.ok) throw new Error("Failed to fetch nearby providers");
-
+        console.log("Starting to fetch dashboard data...");
+        
+        // Fetch summaries
+        console.log("Fetching summaries...");
+        const summariesRes = await fetch("http://localhost:8000/summaries/", {
+          headers: { 
+            Authorization: `Bearer ${token}`,
+            'Content-Type': 'application/json'
+          },
+        });
+        console.log("Summaries response:", summariesRes.status);
+        if (!summariesRes.ok) {
+          const errorData = await summariesRes.json();
+          throw new Error(`Failed to fetch summaries: ${errorData.detail || summariesRes.statusText}`);
+        }
         const summariesData = await summariesRes.json();
-        const vaccinesData = await vaccinesRes.json();
-        const providersData = await providersRes.json();
-
+        console.log("Summaries data received:", summariesData);
         setSummaries(summariesData);
+
+        // Fetch upcoming vaccines
+        console.log("Fetching vaccines...");
+        const vaccinesRes = await fetch("http://localhost:8000/upcoming-vaccines", {
+          headers: { 
+            Authorization: `Bearer ${token}`,
+            'Content-Type': 'application/json'
+          },
+        });
+        console.log("Vaccines response:", vaccinesRes.status);
+        if (!vaccinesRes.ok) {
+          const errorData = await vaccinesRes.json();
+          throw new Error(`Failed to fetch vaccines: ${errorData.detail || vaccinesRes.statusText}`);
+        }
+        const vaccinesData = await vaccinesRes.json();
+        console.log("Vaccines data received:", vaccinesData);
         setUpcomingVaccines(vaccinesData);
+
+        // Fetch nearby providers
+        console.log("Fetching providers...");
+        const providersRes = await fetch("http://localhost:8000/child/nearby-providers", {
+          headers: { 
+            Authorization: `Bearer ${token}`,
+            'Content-Type': 'application/json'
+          },
+        });
+        console.log("Providers response:", providersRes.status);
+        if (!providersRes.ok) {
+          const errorData = await providersRes.json();
+          throw new Error(`Failed to fetch providers: ${errorData.detail || providersRes.statusText}`);
+        }
+        const providersData = await providersRes.json();
+        console.log("Providers data received:", providersData);
         setNearbyProviders(providersData);
+
       } catch (err) {
-        alert(err.message);
-        navigate("/login");
+        console.error("Dashboard data fetch error:", err);
+        setError(err.message);
+        // Only redirect to login if it's an authentication error
+        if (err.message.includes('401') || err.message.includes('403')) {
+          navigate("/login");
+        }
       } finally {
         setLoading(false);
       }
@@ -310,8 +356,130 @@ export default function DashboardPage({ onLogout }) {
     fetchHealthAlerts();
   }, []);
 
+  // Add function to schedule general appointment
+  const scheduleGeneralAppointment = async (disease, recommendation) => {
+    if (!selectedProviderId || !appointmentDate) {
+      alert("Please select a provider and appointment date");
+      return;
+    }
+
+    const token = localStorage.getItem("token");
+    if (!token) {
+      alert("You must be logged in to schedule appointments");
+      navigate("/login");
+      return;
+    }
+
+    setScheduleSubmitting(true);
+    
+    // Format the date to include the selected time
+    const formattedDate = `${appointmentDate} ${appointmentTime}:00`;
+    
+    console.log("Scheduling appointment with:", {
+      provider_id: selectedProviderId,
+      appointment_date: formattedDate,
+      notes: `Health Alert - ${disease}: ${recommendation}`,
+      healthalert_id: selectedAlert.id
+    });
+
+    try {
+      const res = await fetch("http://localhost:8000/general-appointments", {
+        method: "POST",
+        headers: {
+          "Authorization": `Bearer ${token}`,
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify({
+          provider_id: selectedProviderId,
+          appointment_date: formattedDate,
+          notes: `Health Alert - ${disease}: ${recommendation}`,
+          healthalert_id: selectedAlert.id
+        })
+      });
+
+      console.log("Response status:", res.status);
+      const responseText = await res.text();
+      console.log("Response text:", responseText);
+
+      if (!res.ok) {
+        if (res.status === 401) {
+          alert("Your session has expired. Please log in again.");
+          navigate("/login");
+          return;
+        }
+        let errorMessage;
+        try {
+          const errorData = JSON.parse(responseText);
+          errorMessage = errorData.detail || "Failed to schedule appointment";
+        } catch {
+          errorMessage = "Failed to schedule appointment";
+        }
+        throw new Error(errorMessage);
+      }
+
+      alert("Appointment scheduled successfully!");
+      setShowGeneralAppointmentModal(false);
+      // Refresh health alerts after successful scheduling
+      fetchHealthAlerts();
+    } catch (err) {
+      console.error("Appointment error:", err);
+      alert(err.message);
+    } finally {
+      setScheduleSubmitting(false);
+    }
+  };
+
+  const formatDateTime = (dateString) => {
+    if (!dateString) return 'Date not available';
+    
+    const date = new Date(dateString);
+    return date.toLocaleString('en-US', {
+      year: 'numeric',
+      month: 'long',
+      day: 'numeric',
+      hour: '2-digit',
+      minute: '2-digit',
+      hour12: true,
+      timeZoneName: 'short'
+    });
+  };
+
   if (loading) {
-    return <Spinner />;
+    return (
+      <div className="min-h-screen bg-[#f5f5f7] flex items-center justify-center">
+        <Spinner />
+      </div>
+    );
+  }
+
+  if (error) {
+    return (
+      <div className="min-h-screen bg-[#f5f5f7] flex items-center justify-center">
+        <div className="bg-white rounded-lg shadow-lg p-8 max-w-md w-full">
+          <div className="text-red-600 mb-4">
+            <svg className="w-12 h-12 mx-auto" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+            </svg>
+          </div>
+          <h2 className="text-xl font-semibold text-center mb-2">Error Loading Dashboard</h2>
+          <p className="text-gray-600 text-center mb-4">{error}</p>
+          <div className="flex justify-center space-x-4">
+            <button
+              onClick={() => window.location.reload()}
+              className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
+            >
+              Retry
+            </button>
+            <button
+              onClick={onLogout}
+              className="px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 transition-colors"
+            >
+              Logout
+            </button>
+          </div>
+        </div>
+      </div>
+    );
   }
 
   return (
@@ -333,16 +501,6 @@ export default function DashboardPage({ onLogout }) {
                 }`}
               >
                 Dashboard
-              </button>
-              <button 
-                onClick={() => setActiveTab('vaccines')}
-                className={`text-sm font-medium transition-colors duration-300 ${
-                  activeTab === 'vaccines' 
-                    ? 'text-blue-600' 
-                    : 'text-gray-500 hover:text-gray-900'
-                }`}
-              >
-                Vaccinations
               </button>
               <button 
                 onClick={() => {
@@ -461,7 +619,7 @@ export default function DashboardPage({ onLogout }) {
         {/* Upcoming Vaccinations Section */}
         <section className="mb-12">
           <div className="flex items-center justify-between mb-6">
-            <h2 className="text-2xl font-semibold text-gray-900">Upcoming Vaccinations</h2>
+            <h2 className="text-2xl font-semibold text-gray-900">Upcoming Vaccinations in 30 days</h2>
             <button
               onClick={fetchImmunizationSummary}
               className="group relative inline-flex items-center px-6 py-3 rounded-xl bg-white/80 backdrop-blur-xl border border-gray-200/50 shadow-sm hover:shadow-md transition-all duration-300 hover:scale-[1.02]"
@@ -528,7 +686,7 @@ export default function DashboardPage({ onLogout }) {
                           </span>
                         ) : (
                           <span className="text-sm text-blue-600">
-                            Due {new Date(vaccine.due_date).toLocaleDateString()}
+                            Due {formatDateTime(vaccine.due_date)}
                           </span>
                         )}
                       </div>
@@ -543,6 +701,7 @@ export default function DashboardPage({ onLogout }) {
         {/* Disease Outbreaks Section */}
         <section ref={diseaseOutbreakRef} className="mb-12">
           <h2 className="text-2xl font-semibold text-gray-900 mb-6">Disease Outbreaks</h2>
+          
           {loadingDiseaseOutbreak ? (
             <div className="flex justify-center py-12">
               <Spinner />
@@ -606,105 +765,182 @@ export default function DashboardPage({ onLogout }) {
         </section>
 
         {/* Health Alerts Section */}
-        {healthAlerts.length > 0 && (
-          <section className="mb-8">
-            <div className="bg-gradient-to-r from-red-50 to-orange-50 backdrop-blur-xl rounded-2xl border border-red-100 p-6">
-              <div className="flex items-center justify-between mb-6">
-                <div className="flex items-center">
-                  <div className="w-10 h-10 flex items-center justify-center rounded-full bg-red-100">
-                    <svg className="w-6 h-6 text-red-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
-                    </svg>
-                  </div>
-                  <h2 className="text-xl font-semibold text-gray-900 ml-3">Active Health Alerts</h2>
-                </div>
-                <span className="px-3 py-1 text-sm font-medium text-red-800 bg-red-100 rounded-full">
-                  {healthAlerts.length} {healthAlerts.length === 1 ? 'Alert' : 'Alerts'}
-                </span>
-              </div>
-
-              <div className="grid gap-4">
-                {healthAlerts.map((alert, index) => {
-                  // Get unique symptoms
-                  const uniqueSymptoms = [...new Set(
-                    alert.matching_symptoms
-                      .map(s => s.name)
-                      .filter(Boolean)
-                  )];
-
-                  return (
-                    <div 
-                      key={index} 
-                      className="bg-white rounded-xl p-6 shadow-sm hover:shadow-md transition-all duration-300"
-                    >
-                      <div className="flex items-start justify-between">
-                        <div className="flex-1">
+        <div className="bg-white shadow rounded-lg p-6 mb-6">
+          <h2 className="text-xl font-semibold text-gray-900 mb-4">Health Alerts</h2>
+          {healthAlerts.length > 0 ? (
+            <div className="space-y-4">
+              {healthAlerts.map((alert, index) => (
+                <div key={index} className="border-l-4 border-red-400 bg-red-50 p-4">
+                  <div className="flex flex-col">
+                    <div className="flex justify-between items-start">
+                      <h3 className="text-lg font-medium text-red-800">
+                        {alert.disease}
+                      </h3>
+                      <span className="text-sm text-red-600">
+                        {formatDateTime(alert.created_at)}
+                      </span>
+                    </div>
+                    <div className="mt-2">
+                      <p className="text-sm text-red-700">
+                        {alert.matching_symptoms && alert.matching_symptoms.length > 0 
+                          ? alert.matching_symptoms
+                              .filter(symptom => symptom && symptom.symptom_name)
+                              .map(symptom => symptom.symptom_name)
+                              .join(", ")
+                          : "No symptoms recorded"}
+                      </p>
+                    </div>
+                    <div className="mt-4 flex justify-between items-center">
+                      {alert.booking_status === 'pending' ? (
+                        <button
+                          onClick={() => {
+                            setSelectedAlert(alert);
+                            setAppointmentDate(new Date().toISOString().split('T')[0]);
+                            fetchNearbyProvidersForSchedule(new Date().toISOString());
+                            setShowGeneralAppointmentModal(true);
+                          }}
+                          className="bg-red-100 px-3 py-1.5 rounded-md text-sm font-medium text-red-800 hover:bg-red-200 focus:outline-none focus:ring-2 focus:ring-red-500 transition-colors duration-200"
+                        >
+                          Schedule Appointment
+                        </button>
+                      ) : (
+                        <div className="flex flex-col">
                           <div className="flex items-center">
-                            <h3 className="text-lg font-semibold text-gray-900">
-                              {alert.disease}
-                            </h3>
-                            <div className="ml-3 flex items-center">
-                              <div className={`w-2 h-2 rounded-full ${
-                                alert.confidence >= 90 ? 'bg-red-500' :
-                                alert.confidence >= 80 ? 'bg-orange-500' :
-                                'bg-yellow-500'
-                              }`} />
-                              <span className="ml-2 text-sm font-medium text-gray-600">
-                                {alert.confidence}% match
-                              </span>
-                            </div>
+                            <span className="inline-flex items-center px-2.5 py-1.5 rounded-full text-xs font-medium bg-green-100 text-green-800">
+                              <svg className="w-4 h-4 mr-1.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+                              </svg>
+                              Appointment Scheduled
+                            </span>
                           </div>
-
-                          {uniqueSymptoms.length > 0 && (
-                            <div className="mt-3">
-                              <div className="flex flex-wrap gap-2">
-                                {uniqueSymptoms.map((symptom, idx) => (
-                                  <span 
-                                    key={idx}
-                                    className="inline-flex items-center px-2.5 py-1 rounded-full text-xs font-medium bg-red-50 text-red-700 border border-red-100"
-                                  >
-                                    {symptom}
-                                  </span>
-                                ))}
+                          {alert.appointment && (
+                            <div className="mt-2 text-sm">
+                              <div className="flex items-center text-gray-700">
+                                <svg className="w-4 h-4 mr-2" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
+                                </svg>
+                                {new Date(alert.appointment.date).toLocaleDateString('en-US', {
+                                  weekday: 'long',
+                                  year: 'numeric',
+                                  month: 'long',
+                                  day: 'numeric',
+                                })}
+                              </div>
+                              <div className="flex items-center mt-1 text-gray-700">
+                                <svg className="w-4 h-4 mr-2" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+                                </svg>
+                                {new Date(alert.appointment.date).toLocaleTimeString('en-US', {
+                                  hour: 'numeric',
+                                  minute: '2-digit',
+                                  hour12: true
+                                })}
+                              </div>
+                              <div className="flex items-center mt-1 text-gray-700">
+                                <svg className="w-4 h-4 mr-2" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" />
+                                </svg>
+                                {alert.appointment.provider_name}
                               </div>
                             </div>
                           )}
-
-                          <div className="mt-4">
-                            <div className={`text-sm font-medium ${
-                              alert.confidence >= 90 ? 'text-red-700' :
-                              alert.confidence >= 80 ? 'text-orange-700' :
-                              'text-yellow-700'
-                            }`}>
-                              {alert.recommendation}
-                            </div>
-                          </div>
                         </div>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <div className="text-center py-8">
+              <p className="text-gray-500">No health alerts at this time.</p>
+            </div>
+          )}
+        </div>
 
-                        <button 
-                          className="ml-4 p-2 text-gray-400 hover:text-gray-600 transition-colors duration-200"
-                          onClick={() => {/* Add action to dismiss or view more details */}}
-                        >
-                          <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 12h.01M12 12h.01M19 12h.01M6 12a1 1 0 11-2 0 1 1 0 012 0zm7 0a1 1 0 11-2 0 1 1 0 012 0zm7 0a1 1 0 11-2 0 1 1 0 012 0z" />
-                          </svg>
-                        </button>
-                      </div>
-
-                      <div className="mt-4 pt-4 border-t border-gray-100">
-                        <div className="flex items-center text-sm text-gray-500">
-                          <svg className="w-4 h-4 mr-1.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
-                          </svg>
-                          Reported: {new Date(alert.created_at).toLocaleDateString()}
+        {/* General Appointment Modal */}
+        {showGeneralAppointmentModal && selectedAlert && (
+          <div className="fixed inset-0 z-50 overflow-y-auto">
+            <div className="flex items-end justify-center min-h-screen pt-4 px-4 pb-20 text-center sm:block sm:p-0">
+              <div className="fixed inset-0 bg-gray-500 bg-opacity-75 transition-opacity" />
+              <span className="hidden sm:inline-block sm:align-middle sm:h-screen">&#8203;</span>
+              <div className="inline-block align-bottom bg-white rounded-lg text-left overflow-hidden shadow-xl transform transition-all sm:my-8 sm:align-middle sm:max-w-lg sm:w-full">
+                <div className="bg-white px-4 pt-5 pb-4 sm:p-6 sm:pb-4">
+                  <div className="sm:flex sm:items-start">
+                    <div className="mt-3 text-center sm:mt-0 sm:text-left w-full">
+                      <h3 className="text-lg leading-6 font-medium text-gray-900">
+                        Schedule Appointment
+                      </h3>
+                      <div className="mt-4">
+                        <div className="mb-4">
+                          <label className="block text-sm font-medium text-gray-700">
+                            Appointment Date
+                          </label>
+                          <input
+                            type="date"
+                            className="mt-1 block w-full border border-gray-300 rounded-md shadow-sm py-2 px-3 focus:ring-blue-500 focus:border-blue-500 sm:text-sm"
+                            value={appointmentDate}
+                            onChange={(e) => setAppointmentDate(e.target.value)}
+                            min={new Date().toISOString().split('T')[0]}
+                          />
+                        </div>
+                        <div className="mb-4">
+                          <label className="block text-sm font-medium text-gray-700">
+                            Appointment Time
+                          </label>
+                          <select
+                            className="mt-1 block w-full border border-gray-300 rounded-md shadow-sm py-2 px-3 focus:ring-blue-500 focus:border-blue-500 sm:text-sm"
+                            value={appointmentTime || "09:00"}
+                            onChange={(e) => setAppointmentTime(e.target.value)}
+                          >
+                            {Array.from({ length: 9 }, (_, i) => i + 9).map((hour) => (
+                              <option key={hour} value={`${hour.toString().padStart(2, '0')}:00`}>
+                                {hour > 12 ? `${hour - 12}:00 PM` : `${hour}:00 AM`}
+                              </option>
+                            ))}
+                          </select>
+                        </div>
+                        <div>
+                          <label className="block text-sm font-medium text-gray-700">
+                            Select Provider
+                          </label>
+                          <select
+                            className="mt-1 block w-full border border-gray-300 rounded-md shadow-sm py-2 px-3 focus:ring-blue-500 focus:border-blue-500 sm:text-sm"
+                            value={selectedProviderId || ""}
+                            onChange={(e) => setSelectedProviderId(Number(e.target.value))}
+                          >
+                            <option value="">Select a provider</option>
+                            {nearbyProvidersForSchedule.map((provider) => (
+                              <option key={provider.provider_id} value={provider.provider_id}>
+                                {provider.provider_name}
+                              </option>
+                            ))}
+                          </select>
                         </div>
                       </div>
                     </div>
-                  );
-                })}
+                  </div>
+                </div>
+                <div className="bg-gray-50 px-4 py-3 sm:px-6 sm:flex sm:flex-row-reverse">
+                  <button
+                    type="button"
+                    className="w-full inline-flex justify-center rounded-md border border-transparent shadow-sm px-4 py-2 bg-blue-600 text-base font-medium text-white hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 sm:ml-3 sm:w-auto sm:text-sm"
+                    onClick={() => scheduleGeneralAppointment(selectedAlert.disease, selectedAlert.recommendation)}
+                    disabled={scheduleSubmitting}
+                  >
+                    {scheduleSubmitting ? 'Scheduling...' : 'Schedule Appointment'}
+                  </button>
+                  <button
+                    type="button"
+                    className="mt-3 w-full inline-flex justify-center rounded-md border border-gray-300 shadow-sm px-4 py-2 bg-white text-base font-medium text-gray-700 hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 sm:mt-0 sm:ml-3 sm:w-auto sm:text-sm"
+                    onClick={() => setShowGeneralAppointmentModal(false)}
+                  >
+                    Cancel
+                  </button>
+                </div>
               </div>
             </div>
-          </section>
+          </div>
         )}
 
         {/* Care History Section */}
@@ -742,13 +978,7 @@ export default function DashboardPage({ onLogout }) {
                     {/* Header with Date and Time */}
                     <div className="flex items-center space-x-4">
                       <div className="text-sm text-gray-500">
-                        {new Date(entry.startedAt).toLocaleDateString()}
-                      </div>
-                      <div className="text-sm text-gray-400">
-                        {new Date(entry.startedAt).toLocaleTimeString([], {
-                          hour: '2-digit',
-                          minute: '2-digit',
-                        })}
+                        {formatDateTime(entry.startedAt)}
                       </div>
                     </div>
 

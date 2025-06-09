@@ -5,27 +5,17 @@ const SAMPLE_QUESTIONS = [
   {
     id: 1,
     question: "What vaccines are due for my child?",
-    answer: "Based on your child's records, the following vaccines are due:\n\n• HepB (Hepatitis B) - Due in 2 weeks\n• Rotavirus - Due in 2 weeks\n• Covid20 (Coronavirus Disease 2020) - Due in 2 weeks\n\nPlease consult with your healthcare provider to schedule these vaccinations."
+    answer: "Here are the upcoming vaccines for your child:\n\n• HepB (Dose 2) — Due on July 4, 2025 at 08:00 PM EDT\n• DTaP (Dose 1) — Booked\n• Rotavirus (Dose 2) — Due on July 4, 2025 at 08:00 PM EDT"
   },
   {
     id: 2,
-    question: "How can I access my medical records?",
-    answer: "You can access your medical records in several ways:\n\n1. Log in to your patient portal\n2. Contact your healthcare provider directly\n3. Use our mobile app\n4. Visit the hospital's records department\n\nFor immediate access, the patient portal is your best option."
+    question: "When is my next appointment?",
+    answer: "Your next scheduled appointment is:\n\n• Friday, July 4, 2025 at 8:00 PM\n  Provider: Hemanth Indala\n  Vaccine: DTaP (Dose 1)"
   },
   {
     id: 3,
-    question: "When is my next appointment?",
-    answer: "Your next scheduled appointments is:\n\n• Healthy - June 19, 2025 at 10:30 AM\n\n\nAppointments are confirmed and reminders will be sent 24 hours before."
-  },
-  {
-    id: 4,
-    question: "What are my recent test results?",
-    answer: "Your most recent test results from February 2024:\n\n• Blood Pressure: 120/80 (Normal)\n• Cholesterol: 180 mg/dL (Normal)\n• Blood Sugar: 95 mg/dL (Normal)\n\nAll results are within normal ranges. No immediate action required."
-  },
-  {
-    id: 5,
-    question: "How do I contact my healthcare provider?",
-    answer: "You can reach your healthcare provider through:\n\n• Phone: (555) 123-4567\n• Email: provider@healthcare.com\n• Patient Portal Messaging\n• Emergency After-hours: (555) 999-8888\n\nFor non-emergencies, the patient portal is the preferred method of communication."
+    question: "Who are the nearby healthcare providers?",
+    answer: "Here is a nearby healthcare provider:\n\n• Unnanu HealthCare\n  Specialty: Pediatrics\n  Location: Austin, Texas\n  Phone: (812) 671-1592\n  Email: healthcare@unnanu.com"
   }
 ];
 
@@ -52,9 +42,7 @@ export default function QueryAssistantPage() {
           Authorization: `Bearer ${token}`
         },
         body: JSON.stringify({ 
-          messages: [
-            { role: 'user', content: query, timestamp: new Date().toISOString() }
-          ] 
+          query: query 
         })
       });
 
