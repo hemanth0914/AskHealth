@@ -31,6 +31,9 @@ export default function HealthcareProviderDashboard({ onLogout }) {
   const [agentResponse, setAgentResponse] = useState('');
   const [audioResponse, setAudioResponse] = useState(null);
 
+  const [pendingQuery, setPendingQuery] = useState(null);
+  const [isConfirming, setIsConfirming] = useState(false);
+
   const timeRangeLabels = {
     today: "Today's Appointments",
     week: "Next 7 Days",
@@ -202,7 +205,10 @@ export default function HealthcareProviderDashboard({ onLogout }) {
       recognition.onresult = (event) => {
         const transcript = event.results[0][0].transcript;
         setTranscript(transcript);
-        handleAgentQuery(transcript);
+        setPendingQuery(transcript);
+        setIsConfirming(true);
+        setAgentResponse('Is this what you said? Please confirm.');
+        speakResponse('Is this what you said? Please confirm.');
       };
 
       recognition.onerror = (event) => {
@@ -236,10 +242,45 @@ export default function HealthcareProviderDashboard({ onLogout }) {
     }
   };
 
-  // Handle agent query
+  // Add function to record vaccination
+  const recordVaccination = async (childId, vaccineName, doseNumber) => {
+    try {
+      const token = localStorage.getItem('token');
+      const response = await fetch('http://localhost:8000/provider/record-vaccination', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`
+        },
+        body: JSON.stringify({
+          child_id: childId,
+          vaccine_name: vaccineName,
+          dose_number: doseNumber,
+          administered_by: providerInfo?.provider_name || '',
+          notes: `Recorded via voice assistant by ${providerInfo?.provider_name}`
+        })
+      });
+
+      if (!response.ok) {
+        throw new Error('Failed to record vaccination');
+      }
+
+      return await response.json();
+    } catch (error) {
+      console.error('Error recording vaccination:', error);
+      throw error;
+    }
+  };
+
+  // Update handleAgentQuery to handle vaccination recording
   const handleAgentQuery = async (query) => {
     setIsProcessing(true);
     try {
+      // Check for vaccination recording pattern
+      const vaccinationPattern = /child (?:with id )?(\d+) has taken ([\w\s]+)(?: dose (\d+))? today/i;
+      const match = query.match(vaccinationPattern);
+
+      // If not a vaccination command, proceed with normal query handling
       const token = localStorage.getItem('token');
       const response = await fetch('http://localhost:8000/agent/query/provider', {
         method: 'POST',
@@ -257,15 +298,35 @@ export default function HealthcareProviderDashboard({ onLogout }) {
       const data = await response.json();
       setAgentResponse(data.text_response);
       
-      // If there's an audio response, convert base64 to audio
+      // Handle vaccination recording flow
+      if (data.type === 'vaccination_record') {
+        // Store the vaccination details for confirmation
+        localStorage.setItem('pendingVaccination', JSON.stringify(data.data.vaccination_record));
+      } else if (data.type === 'confirmation' && localStorage.getItem('pendingVaccination')) {
+        // Process the vaccination record
+        const vaccinationData = JSON.parse(localStorage.getItem('pendingVaccination'));
+        await recordVaccination(
+          vaccinationData.child_id,
+          vaccinationData.vaccine_name,
+          vaccinationData.dose_number
+        );
+        localStorage.removeItem('pendingVaccination');
+      } else if (data.type === 'cancellation') {
+        localStorage.removeItem('pendingVaccination');
+      }
+      
       if (data.audio_response) {
         const audio = new Audio(`data:audio/mp3;base64,${data.audio_response}`);
         setAudioResponse(audio);
         audio.play();
+      } else {
+        speakResponse(data.text_response);
       }
     } catch (err) {
-      console.error('Error querying agent:', err);
-      setError('Failed to process your request. Please try again.');
+      console.error('Error processing query:', err);
+      const errorMessage = 'Failed to process your request. Please try again.';
+      setError(errorMessage);
+      speakResponse(errorMessage);
     } finally {
       setIsProcessing(false);
     }
@@ -540,6 +601,98 @@ export default function HealthcareProviderDashboard({ onLogout }) {
     fetchDiseaseOutbreak();
   }, []); // Empty dependency array means this runs once on mount
 
+  const handleTranscriptConfirmation = async (isConfirmed) => {
+    if (isConfirmed) {
+      setIsProcessing(true);
+      try {
+        const token = localStorage.getItem('token');
+        
+        // Updated pattern to better handle variations and vaccine names
+        const vaccinationPattern = /(?:child|kid|patient|chill)(?:\s+with)?\s+(?:id\s+)?(\d+)\s+(?:has|have)\s+(?:taken|received|got)\s+(?:vaccine|vaccination)?\s*([\w\s-]+?)(?:\s+(?:vaccine|vaccination|booster|shot|dose))?\s*(?:dose\s+(\d+))?\s+today/i;
+        const match = pendingQuery.match(vaccinationPattern);
+
+        if (match) {
+          // It's a vaccination record - process it directly
+          const childId = parseInt(match[1]);
+          // Clean up vaccine name - remove extra spaces and convert to uppercase for consistency
+          const vaccineName = match[2].trim().toUpperCase();
+          const doseNumber = match[3] ? parseInt(match[3]) : 1;
+
+          console.log('Processing vaccination record:', {
+            childId,
+            vaccineName,
+            doseNumber,
+            originalMatch: match[2]
+          });
+
+          // Call the vaccination record endpoint directly
+          const response = await fetch('http://localhost:8000/provider/record-vaccination', {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'Authorization': `Bearer ${token}`
+            },
+            body: JSON.stringify({
+              child_id: childId,
+              vaccine_name: vaccineName,
+              dose_number: doseNumber,
+              administered_by: providerInfo?.provider_name || '',
+              notes: `Recorded via voice assistant by ${providerInfo?.provider_name}`
+            })
+          });
+
+          if (!response.ok) {
+            throw new Error('Failed to record vaccination');
+          }
+
+          const successMessage = `Successfully recorded vaccination for patient ${childId}: ${vaccineName} dose ${doseNumber}`;
+          setAgentResponse(successMessage);
+          speakResponse(successMessage);
+        } else {
+          // For non-vaccination queries, proceed with normal agent query
+          const response = await fetch('http://localhost:8000/agent/query/provider', {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'Authorization': `Bearer ${token}`
+            },
+            body: JSON.stringify({ query: pendingQuery })
+          });
+
+          if (!response.ok) {
+            throw new Error('Failed to get agent response');
+          }
+
+          const data = await response.json();
+          setAgentResponse(data.text_response);
+          
+          if (data.audio_response) {
+            const audio = new Audio(`data:audio/mp3;base64,${data.audio_response}`);
+            setAudioResponse(audio);
+            audio.play();
+          } else {
+            speakResponse(data.text_response);
+          }
+        }
+      } catch (err) {
+        console.error('Error processing query:', err);
+        const errorMessage = 'Failed to process your request. Please try again.';
+        setError(errorMessage);
+        speakResponse(errorMessage);
+      } finally {
+        setIsProcessing(false);
+      }
+    } else {
+      // Clear and ask for repeat
+      setTranscript('');
+      setAgentResponse('Please repeat your command.');
+      speakResponse('Please repeat your command.');
+    }
+    // Reset confirmation state
+    setIsConfirming(false);
+    setPendingQuery(null);
+  };
+
   if (loading) {
     return (
       <div className="min-h-screen bg-gray-50 flex items-center justify-center">
@@ -549,61 +702,65 @@ export default function HealthcareProviderDashboard({ onLogout }) {
   }
 
   const VoiceAssistant = () => (
-    <div className="bg-white shadow rounded-lg p-6 mb-6">
-      <div className="flex justify-between items-center mb-4">
-        <h2 className="text-xl font-semibold text-gray-900">Voice Assistant</h2>
-        <button
-          onClick={toggleListening}
-          disabled={isProcessing}
-          className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors duration-200 flex items-center space-x-2
-            ${isListening
-              ? 'bg-red-600 text-white hover:bg-red-700'
-              : isProcessing
-                ? 'bg-gray-300 cursor-not-allowed'
-                : 'bg-blue-600 text-white hover:bg-blue-700'
-            }`}
-        >
-          {isListening ? (
-            <>
-              <FaMicrophoneSlash className="h-4 w-4" />
-              <span>Stop Listening</span>
-            </>
-          ) : (
-            <>
-              <FaMicrophone className="h-4 w-4" />
-              <span>Start Listening</span>
-            </>
-          )}
-        </button>
-      </div>
-
-      {error && (
-        <div className="mb-4 p-4 bg-red-100 text-red-700 rounded-lg">
-          <span>{error}</span>
+    <div className="bg-white p-6 rounded-lg shadow-lg">
+      <div className="flex flex-col space-y-4">
+        <div className="flex items-center justify-between">
+          <h2 className="text-xl font-semibold">Voice Assistant</h2>
+          <button
+            onClick={toggleListening}
+            className={`px-4 py-2 rounded-full ${
+              isListening
+                ? 'bg-red-500 hover:bg-red-600'
+                : 'bg-blue-500 hover:bg-blue-600'
+            } text-white`}
+          >
+            {isListening ? 'Stop' : 'Start'} Listening
+          </button>
         </div>
-      )}
 
-      {transcript && (
-        <div className="mt-4 p-4 bg-gray-50 rounded-lg border border-gray-200">
-          <h3 className="font-medium text-gray-900 mb-2">You said:</h3>
-          <p className="text-gray-700 italic">{transcript}</p>
-        </div>
-      )}
+        {transcript && (
+          <div className="bg-gray-50 p-4 rounded">
+            <p className="font-medium">You said:</p>
+            <p className="text-gray-700">{transcript}</p>
+          </div>
+        )}
 
-      {agentResponse && (
-        <div className="mt-4 p-4 bg-blue-50 rounded-lg border border-blue-200">
-          <h3 className="font-medium text-gray-900 mb-2">Assistant Response:</h3>
-          <p className="text-gray-700">{agentResponse}</p>
-        </div>
-      )}
+        {agentResponse && (
+          <div className="bg-blue-50 p-4 rounded">
+            <p className="font-medium">Assistant Response:</p>
+            <p className="text-gray-700">{agentResponse}</p>
+            
+            {/* Show confirmation buttons when there's a pending query */}
+            {isConfirming && (
+              <div className="mt-4 flex space-x-4">
+                <button
+                  onClick={() => handleTranscriptConfirmation(true)}
+                  className="px-4 py-2 bg-green-500 text-white rounded hover:bg-green-600"
+                >
+                  Yes, That's Correct
+                </button>
+                <button
+                  onClick={() => handleTranscriptConfirmation(false)}
+                  className="px-4 py-2 bg-red-500 text-white rounded hover:bg-red-600"
+                >
+                  No, Let Me Repeat
+                </button>
+              </div>
+            )}
+          </div>
+        )}
 
-      <div className="mt-6 bg-gray-50 p-4 rounded-lg border border-gray-200">
-        <h3 className="font-medium text-gray-900 mb-3">You can ask questions about:</h3>
-        <ul className="list-disc list-inside text-gray-600 space-y-2">
-          <li>Appointments and schedules</li>
-          <li>Health alerts in your area</li>
-          <li>Upcoming vaccinations</li>
-        </ul>
+        {error && (
+          <div className="bg-red-50 p-4 rounded">
+            <p className="text-red-600">{error}</p>
+          </div>
+        )}
+
+        {isProcessing && (
+          <div className="flex items-center justify-center">
+            <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-500"></div>
+          </div>
+        )}
       </div>
     </div>
   );
