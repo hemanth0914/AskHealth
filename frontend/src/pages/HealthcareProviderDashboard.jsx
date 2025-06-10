@@ -126,23 +126,26 @@ export default function HealthcareProviderDashboard({ onLogout }) {
   }, []);
 
   const formatAppointmentDate = (dateString) => {
+    // Parse the UTC date string
     const date = new Date(dateString);
-    return date.toLocaleString('en-US', {
+    
+    // Format in local timezone
+    return new Intl.DateTimeFormat('en-US', {
       year: 'numeric',
       month: 'long',
       day: 'numeric',
-      hour: '2-digit',
+      hour: 'numeric',
       minute: '2-digit',
-      hour12: true,
-      timeZoneName: 'short'
-    });
+      hour12: true
+    }).format(date);
   };
 
   const groupAppointmentsByDate = (appointments) => {
     return appointments.reduce((groups, appointment) => {
-      // Convert UTC date to local date for grouping
+      // Parse the UTC date
       const date = new Date(appointment.appointment_date);
-      const dateStr = date.toISOString().split('T')[0];
+      // Get local date string for grouping
+      const dateStr = date.toLocaleDateString('en-US');
       
       if (!groups[dateStr]) {
         groups[dateStr] = [];
@@ -161,10 +164,10 @@ export default function HealthcareProviderDashboard({ onLogout }) {
     const tomorrow = new Date(today);
     tomorrow.setDate(tomorrow.getDate() + 1);
 
-    // Convert all dates to local midnight for comparison
-    const localDate = new Date(date.toLocaleDateString());
-    const localToday = new Date(today.toLocaleDateString());
-    const localTomorrow = new Date(tomorrow.toLocaleDateString());
+    // Convert to local dates for comparison
+    const localDate = new Date(date.toLocaleDateString('en-US'));
+    const localToday = new Date(today.toLocaleDateString('en-US'));
+    const localTomorrow = new Date(tomorrow.toLocaleDateString('en-US'));
 
     if (localDate.getTime() === localToday.getTime()) {
       return 'Today';
@@ -172,12 +175,12 @@ export default function HealthcareProviderDashboard({ onLogout }) {
     if (localDate.getTime() === localTomorrow.getTime()) {
       return 'Tomorrow';
     }
-    return date.toLocaleDateString('en-US', {
+    return new Intl.DateTimeFormat('en-US', {
       weekday: 'long',
       year: 'numeric',
       month: 'long',
       day: 'numeric'
-    });
+    }).format(date);
   };
 
   // Update the Stats Grid section to properly count today's appointments

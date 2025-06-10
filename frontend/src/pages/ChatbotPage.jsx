@@ -222,10 +222,8 @@ function ChatBot() {
     stopAssistant();
     setShowThankYou(true);
 
-    // Redirect to dashboard after 5 seconds
-    setTimeout(() => {
-      navigate("/dashboard");
-    }, 5000);
+    // Navigate to dashboard immediately with replace
+    navigate('/dashboard', { replace: true });
 
     setTimeout(async () => {
       try {
@@ -294,8 +292,12 @@ function ChatBot() {
           const healthAlertsResponse = await fetch("http://localhost:8000/check-health-alerts", {
             method: "POST",
             headers: {
+              "Content-Type": "application/json",
               Authorization: `Bearer ${token}`,
             },
+            body: JSON.stringify({
+              call_id: callId
+            }),
           });
 
           if (!healthAlertsResponse.ok) {
