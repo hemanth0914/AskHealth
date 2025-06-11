@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { FaMicrophone, FaMicrophoneSlash } from 'react-icons/fa';
+import { FaMicrophone, FaMicrophoneSlash, FaUserPlus, FaSpinner, FaPhone } from 'react-icons/fa';
+import { vapi, startAssistant, stopAssistant } from '../ai';
 import outbreakImage from '../assets/images/outbreak.jpg';
 
 const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
@@ -33,6 +34,21 @@ export default function HealthcareProviderDashboard({ onLogout }) {
 
   const [pendingQuery, setPendingQuery] = useState(null);
   const [isConfirming, setIsConfirming] = useState(false);
+
+  // Add new VAPI-related states
+  const [vapiStarted, setVapiStarted] = useState(false);
+  const [vapiLoading, setVapiLoading] = useState(false);
+  const [assistantIsSpeaking, setAssistantIsSpeaking] = useState(false);
+  const [volumeLevel, setVolumeLevel] = useState(0);
+  const [callId, setCallId] = useState("");
+  const [showThankYou, setShowThankYou] = useState(false);
+
+  // Add new states for PDF upload
+  const [showUploadModal, setShowUploadModal] = useState(false);
+  const [selectedFile, setSelectedFile] = useState(null);
+  const [uploadStatus, setUploadStatus] = useState('idle'); // idle, uploading, success, error
+  const [uploadError, setUploadError] = useState(null);
+  const fileInputRef = useRef(null);
 
   const timeRangeLabels = {
     today: "Today's Appointments",
@@ -276,19 +292,19 @@ export default function HealthcareProviderDashboard({ onLogout }) {
   const handleAgentQuery = async (query) => {
     setIsProcessing(true);
     try {
-      // Check for vaccination recording pattern
-      const vaccinationPattern = /child (?:with id )?(\d+) has taken ([\w\s]+)(?: dose (\d+))? today/i;
-      const match = query.match(vaccinationPattern);
-
-      // If not a vaccination command, proceed with normal query handling
       const token = localStorage.getItem('token');
+      
+      // Send the query to the agent endpoint
       const response = await fetch('http://localhost:8000/agent/query/provider', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
           'Authorization': `Bearer ${token}`
         },
-        body: JSON.stringify({ query })
+        body: JSON.stringify({ 
+          query,
+          return_audio: true
+        })
       });
 
       if (!response.ok) {
@@ -296,31 +312,24 @@ export default function HealthcareProviderDashboard({ onLogout }) {
       }
 
       const data = await response.json();
-      setAgentResponse(data.text_response);
       
-      // Handle vaccination recording flow
-      if (data.type === 'vaccination_record') {
-        // Store the vaccination details for confirmation
-        localStorage.setItem('pendingVaccination', JSON.stringify(data.data.vaccination_record));
-      } else if (data.type === 'confirmation' && localStorage.getItem('pendingVaccination')) {
-        // Process the vaccination record
-        const vaccinationData = JSON.parse(localStorage.getItem('pendingVaccination'));
-        await recordVaccination(
-          vaccinationData.child_id,
-          vaccinationData.vaccine_name,
-          vaccinationData.dose_number
-        );
-        localStorage.removeItem('pendingVaccination');
-      } else if (data.type === 'cancellation') {
-        localStorage.removeItem('pendingVaccination');
-      }
-      
-      if (data.audio_response) {
-        const audio = new Audio(`data:audio/mp3;base64,${data.audio_response}`);
-        setAudioResponse(audio);
-        audio.play();
+      // Handle the response based on type
+      if (data.type === 'ehr_request') {
+        setAgentResponse(data.message);
+        if (data.data?.ehr_generated) {
+          speakResponse("I've generated and sent the EHR to your email.");
+        } else {
+          speakResponse(data.message);
+        }
       } else {
-        speakResponse(data.text_response);
+        setAgentResponse(data.text_response || data.message);
+        if (data.audio_response) {
+          const audio = new Audio(`data:audio/mp3;base64,${data.audio_response}`);
+          setAudioResponse(audio);
+          audio.play();
+        } else {
+          speakResponse(data.text_response || data.message);
+        }
       }
     } catch (err) {
       console.error('Error processing query:', err);
@@ -603,95 +612,320 @@ export default function HealthcareProviderDashboard({ onLogout }) {
 
   const handleTranscriptConfirmation = async (isConfirmed) => {
     if (isConfirmed) {
-      setIsProcessing(true);
-      try {
-        const token = localStorage.getItem('token');
-        
-        // Updated pattern to better handle variations and vaccine names
-        const vaccinationPattern = /(?:child|kid|patient|chill)(?:\s+with)?\s+(?:id\s+)?(\d+)\s+(?:has|have)\s+(?:taken|received|got)\s+(?:vaccine|vaccination)?\s*([\w\s-]+?)(?:\s+(?:vaccine|vaccination|booster|shot|dose))?\s*(?:dose\s+(\d+))?\s+today/i;
-        const match = pendingQuery.match(vaccinationPattern);
+        setIsProcessing(true);
+        try {
+            const token = localStorage.getItem('token');
+            
+            // Updated pattern to better handle variations and vaccine names
+            const vaccinationPattern = /(?:child|kid|patient)(?:\s+with)?\s+(?:id\s+)?(\d+)\s+(?:has|have)\s+(?:taken|received|got)\s+(?:vaccine|vaccination)?\s*([\w\s-]+?)(?:\s+(?:vaccine|vaccination|booster|shot|dose))?\s*(?:dose\s+(\d+))?\s+today/i;
+            const ehrPattern = /(?:fetch|get|send)\s+(?:ehr|electronic health record|health record|medical record|patient record)\s+(?:for\s+)?(?:child|kid|patient)\s+(?:with\s+)?(?:ssn\s+)?(\d{4}|\d{9})/i;
+            
+            const vacMatch = pendingQuery.match(vaccinationPattern);
+            const ehrMatch = pendingQuery.match(ehrPattern);
 
-        if (match) {
-          // It's a vaccination record - process it directly
-          const childId = parseInt(match[1]);
-          // Clean up vaccine name - remove extra spaces and convert to uppercase for consistency
-          const vaccineName = match[2].trim().toUpperCase();
-          const doseNumber = match[3] ? parseInt(match[3]) : 1;
+            if (vacMatch) {
+                // Handle vaccination record
+                const childId = parseInt(vacMatch[1]);
+                const vaccineName = vacMatch[2].trim().toUpperCase();
+                const doseNumber = vacMatch[3] ? parseInt(vacMatch[3]) : 1;
 
-          console.log('Processing vaccination record:', {
-            childId,
-            vaccineName,
-            doseNumber,
-            originalMatch: match[2]
-          });
+                console.log('Processing vaccination record:', {
+                    childId,
+                    vaccineName,
+                    doseNumber,
+                    originalMatch: vacMatch[2]
+                });
 
-          // Call the vaccination record endpoint directly
-          const response = await fetch('http://localhost:8000/provider/record-vaccination', {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-              'Authorization': `Bearer ${token}`
-            },
-            body: JSON.stringify({
-              child_id: childId,
-              vaccine_name: vaccineName,
-              dose_number: doseNumber,
-              administered_by: providerInfo?.provider_name || '',
-              notes: `Recorded via voice assistant by ${providerInfo?.provider_name}`
-            })
-          });
+                const response = await fetch('http://localhost:8000/provider/record-vaccination', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Authorization': `Bearer ${token}`
+                    },
+                    body: JSON.stringify({
+                        child_id: childId,
+                        vaccine_name: vaccineName,
+                        dose_number: doseNumber,
+                        administered_by: providerInfo?.provider_name || '',
+                        notes: `Recorded via voice assistant by ${providerInfo?.provider_name}`
+                    })
+                });
 
-          if (!response.ok) {
-            throw new Error('Failed to record vaccination');
-          }
+                if (!response.ok) {
+                    throw new Error('Failed to record vaccination');
+                }
 
-          const successMessage = `Successfully recorded vaccination for patient ${childId}: ${vaccineName} dose ${doseNumber}`;
-          setAgentResponse(successMessage);
-          speakResponse(successMessage);
-        } else {
-          // For non-vaccination queries, proceed with normal agent query
-          const response = await fetch('http://localhost:8000/agent/query/provider', {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-              'Authorization': `Bearer ${token}`
-            },
-            body: JSON.stringify({ query: pendingQuery })
-          });
+                const successMessage = `Successfully recorded vaccination for patient ${childId}: ${vaccineName} dose ${doseNumber}`;
+                setAgentResponse(successMessage);
+                speakResponse(successMessage);
+            } else if (ehrMatch) {
+                // Handle EHR request
+                const ssn = ehrMatch[1];
+                console.log('Processing EHR request for SSN:', ssn);
 
-          if (!response.ok) {
-            throw new Error('Failed to get agent response');
-          }
+                const response = await fetch(`http://localhost:8000/provider/generate-ehr?ssn=${ssn}`, {
+                    method: 'POST',
+                    headers: {
+                        'Authorization': `Bearer ${token}`
+                    }
+                });
 
-          const data = await response.json();
-          setAgentResponse(data.text_response);
-          
-          if (data.audio_response) {
-            const audio = new Audio(`data:audio/mp3;base64,${data.audio_response}`);
-            setAudioResponse(audio);
-            audio.play();
-          } else {
-            speakResponse(data.text_response);
-          }
+                if (!response.ok) {
+                    throw new Error('Failed to generate EHR');
+                }
+
+                const data = await response.json();
+                setAgentResponse(data.message);
+                speakResponse(data.message);
+            } else {
+                // For non-vaccination queries, proceed with normal agent query
+                const response = await fetch('http://localhost:8000/agent/query/provider', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Authorization': `Bearer ${token}`
+                    },
+                    body: JSON.stringify({ 
+                        query: pendingQuery,
+                        return_audio: true 
+                    })
+                });
+
+                if (!response.ok) {
+                    throw new Error('Failed to get agent response');
+                }
+
+                const data = await response.json();
+                setAgentResponse(data.text_response);
+                
+                if (data.audio_response) {
+                    const audio = new Audio(`data:audio/mp3;base64,${data.audio_response}`);
+                    setAudioResponse(audio);
+                    audio.play();
+                } else {
+                    speakResponse(data.text_response);
+                }
+            }
+        } catch (err) {
+            console.error('Error processing query:', err);
+            const errorMessage = 'Failed to process your request. Please try again.';
+            setError(errorMessage);
+            speakResponse(errorMessage);
+        } finally {
+            setIsProcessing(false);
         }
-      } catch (err) {
-        console.error('Error processing query:', err);
-        const errorMessage = 'Failed to process your request. Please try again.';
-        setError(errorMessage);
-        speakResponse(errorMessage);
-      } finally {
-        setIsProcessing(false);
-      }
     } else {
-      // Clear and ask for repeat
-      setTranscript('');
-      setAgentResponse('Please repeat your command.');
-      speakResponse('Please repeat your command.');
+        // Clear and ask for repeat
+        setTranscript('');
+        setAgentResponse('Please repeat your command.');
+        speakResponse('Please repeat your command.');
     }
     // Reset confirmation state
     setIsConfirming(false);
     setPendingQuery(null);
+};
+
+  // Initialize VAPI
+  useEffect(() => {
+    vapi
+      .on("call-start", () => {
+        setVapiLoading(false);
+        setVapiStarted(true);
+      })
+      .on("call-end", () => {
+        setVapiStarted(false);
+        setVapiLoading(false);
+      })
+      .on("speech-start", () => setAssistantIsSpeaking(true))
+      .on("speech-end", () => setAssistantIsSpeaking(false))
+      .on("volume-level", (level) => setVolumeLevel(level));
+  }, []);
+
+  // Handle VAPI initialization
+  const initializeVapi = async () => {
+    try {
+      const token = localStorage.getItem("token");
+      if (!token) {
+        alert("You need to log in first.");
+        return;
+      }
+
+      setVapiLoading(true);
+      const response = await fetch("http://localhost:8000/provider/profile", {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+
+      const providerData = await response.json();
+      const data = await startAssistant(providerData);
+      
+      if (data && (data.id || data.call?.id)) {
+        const id = data.id || data.call.id;
+        setCallId(id);
+        console.log("✅ Assistant ready with call ID:", id);
+      } else {
+        throw new Error("Failed to get valid assistant ID");
+      }
+    } catch (error) {
+      console.error("Failed to initialize VAPI:", error);
+      setVapiLoading(false);
+      alert("Failed to initialize voice assistant. Please try again.");
+    }
   };
+
+  // Handle stopping VAPI
+  const handleVapiStop = async () => {
+    try {
+      stopAssistant();
+      setVapiStarted(false);
+      setShowThankYou(true);
+      setTimeout(() => {
+        setShowThankYou(false);
+      }, 3000);
+    } catch (error) {
+      console.error("Error stopping VAPI:", error);
+    }
+  };
+
+  // Handle file selection
+  const handleFileSelect = (event) => {
+    const file = event.target.files[0];
+    if (file && file.type === 'application/pdf') {
+      setSelectedFile(file);
+      setUploadError(null);
+    } else {
+      setUploadError('Please select a PDF file');
+      setSelectedFile(null);
+    }
+  };
+
+  // Handle file upload
+  const handleUpload = async () => {
+    if (!selectedFile) {
+      setUploadError('Please select a file first');
+      return;
+    }
+
+    setUploadStatus('uploading');
+    setUploadError(null);
+
+    const formData = new FormData();
+    formData.append('pdf_file', selectedFile);
+
+    try {
+      const token = localStorage.getItem('token');
+      const response = await fetch('http://localhost:8000/provider/upload-client-pdf', {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${token}`
+        },
+        body: formData
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.detail || 'Failed to upload file');
+      }
+
+      const data = await response.json();
+      
+      if (data.status === 'exists') {
+        setUploadStatus('warning');
+        setUploadError(data.message);
+      } else if (data.status === 'success') {
+        setUploadStatus('success');
+        setTimeout(() => {
+          setShowUploadModal(false);
+          setSelectedFile(null);
+          setUploadStatus('idle');
+        }, 2000);
+      }
+    } catch (error) {
+      console.error('Upload error:', error);
+      setUploadError(error.message);
+      setUploadStatus('error');
+    }
+  };
+
+  // Update the AddClientModal component
+  const AddClientModal = () => (
+    <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+      <div className="bg-white rounded-lg p-6 w-full max-w-md">
+        <div className="flex justify-between items-center mb-4">
+          <h2 className="text-xl font-semibold">Add New Client</h2>
+          <button
+            onClick={() => {
+              setShowUploadModal(false);
+              setSelectedFile(null);
+              setUploadStatus('idle');
+              setUploadError(null);
+            }}
+            className="text-gray-500 hover:text-gray-700"
+          >
+            ×
+          </button>
+        </div>
+
+        <div className="space-y-4">
+          <div className="border-2 border-dashed border-gray-300 rounded-lg p-4 text-center">
+            <input
+              type="file"
+              ref={fileInputRef}
+              onChange={handleFileSelect}
+              accept=".pdf"
+              className="hidden"
+            />
+            <button
+              onClick={() => fileInputRef.current?.click()}
+              className="px-4 py-2 bg-blue-500 text-white rounded hover:bg-blue-600 transition-colors"
+              disabled={uploadStatus === 'uploading'}
+            >
+              Select PDF File
+            </button>
+            {selectedFile && (
+              <p className="mt-2 text-sm text-gray-600">
+                Selected: {selectedFile.name}
+              </p>
+            )}
+          </div>
+
+          {uploadError && (
+            <div className={`text-sm ${
+              uploadStatus === 'warning' ? 'text-orange-500' : 'text-red-500'
+            }`}>
+              {uploadError}
+            </div>
+          )}
+
+          <button
+            onClick={handleUpload}
+            disabled={!selectedFile || uploadStatus === 'uploading'}
+            className={`w-full py-2 px-4 rounded transition-colors ${
+              uploadStatus === 'uploading'
+                ? 'bg-gray-400'
+                : uploadStatus === 'success'
+                ? 'bg-green-500'
+                : uploadStatus === 'warning'
+                ? 'bg-orange-500'
+                : 'bg-blue-500 hover:bg-blue-600'
+            } text-white flex items-center justify-center space-x-2`}
+          >
+            {uploadStatus === 'uploading' ? (
+              <>
+                <FaSpinner className="animate-spin" />
+                <span>Uploading...</span>
+              </>
+            ) : uploadStatus === 'success' ? (
+              'Upload Successful!'
+            ) : uploadStatus === 'warning' ? (
+              'Client Already Exists'
+            ) : (
+              'Upload PDF'
+            )}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
 
   if (loading) {
     return (
@@ -705,43 +939,53 @@ export default function HealthcareProviderDashboard({ onLogout }) {
     <div className="bg-white p-6 rounded-lg shadow-lg">
       <div className="flex flex-col space-y-4">
         <div className="flex items-center justify-between">
-          <h2 className="text-xl font-semibold">Voice Assistant</h2>
+          <h2 className="text-xl font-semibold">Voice Commands</h2>
           <button
             onClick={toggleListening}
-            className={`px-4 py-2 rounded-full ${
+            className={`flex items-center space-x-2 px-4 py-2 rounded-full transition-all duration-300 ${
               isListening
-                ? 'bg-red-500 hover:bg-red-600'
-                : 'bg-blue-500 hover:bg-blue-600'
-            } text-white`}
+                ? 'bg-red-500 hover:bg-red-600 text-white shadow-red-200'
+                : 'bg-blue-500 hover:bg-blue-600 text-white shadow-blue-200'
+            } shadow-lg transform hover:scale-105`}
           >
-            {isListening ? 'Stop' : 'Start'} Listening
+            {isListening ? (
+              <>
+                <FaMicrophoneSlash className="w-4 h-4" />
+                <span>Stop Recording</span>
+              </>
+            ) : (
+              <>
+                <FaMicrophone className="w-4 h-4" />
+                <span>Ask your query</span>
+              </>
+            )}
           </button>
         </div>
 
         {transcript && (
-          <div className="bg-gray-50 p-4 rounded">
-            <p className="font-medium">You said:</p>
-            <p className="text-gray-700">{transcript}</p>
+          <div className="bg-gray-50 p-4 rounded-lg border border-gray-200">
+            <p className="font-medium text-gray-700">Your command:</p>
+            <p className="text-gray-600 mt-1">{transcript}</p>
           </div>
         )}
 
         {agentResponse && (
-          <div className="bg-blue-50 p-4 rounded">
-            <p className="font-medium">Assistant Response:</p>
-            <p className="text-gray-700">{agentResponse}</p>
+          <div className="bg-blue-50 p-4 rounded-lg border border-blue-200">
+            <p className="font-medium text-blue-700">Assistant Response:</p>
+            <p className="text-gray-700 mt-1">{agentResponse}</p>
             
             {/* Show confirmation buttons when there's a pending query */}
             {isConfirming && (
               <div className="mt-4 flex space-x-4">
                 <button
                   onClick={() => handleTranscriptConfirmation(true)}
-                  className="px-4 py-2 bg-green-500 text-white rounded hover:bg-green-600"
+                  className="px-4 py-2 bg-green-500 text-white rounded-md hover:bg-green-600 transition-all duration-300 transform hover:scale-105 shadow-lg shadow-green-200"
                 >
                   Yes, That's Correct
                 </button>
                 <button
                   onClick={() => handleTranscriptConfirmation(false)}
-                  className="px-4 py-2 bg-red-500 text-white rounded hover:bg-red-600"
+                  className="px-4 py-2 bg-red-500 text-white rounded-md hover:bg-red-600 transition-all duration-300 transform hover:scale-105 shadow-lg shadow-red-200"
                 >
                   No, Let Me Repeat
                 </button>
@@ -751,13 +995,13 @@ export default function HealthcareProviderDashboard({ onLogout }) {
         )}
 
         {error && (
-          <div className="bg-red-50 p-4 rounded">
+          <div className="bg-red-50 p-4 rounded-lg border border-red-200">
             <p className="text-red-600">{error}</p>
           </div>
         )}
 
         {isProcessing && (
-          <div className="flex items-center justify-center">
+          <div className="flex items-center justify-center p-4">
             <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-500"></div>
           </div>
         )}
@@ -818,6 +1062,73 @@ export default function HealthcareProviderDashboard({ onLogout }) {
     </div>
   );
 
+  // Replace the VapiAssistant component with a floating button
+  const VapiAssistant = () => (
+    <div className="fixed bottom-8 right-8 z-50">
+      <div className="relative group">
+        {/* Tooltip */}
+        <div className="absolute bottom-full right-0 mb-2 transition-opacity duration-200 opacity-0 group-hover:opacity-100">
+          <div className="bg-gray-800 text-white text-sm py-1 px-3 rounded-md whitespace-nowrap">
+            {vapiStarted ? 'End Call' : 'Call Assistant'}
+          </div>
+        </div>
+
+        {/* Main Button */}
+        <button
+          onClick={vapiStarted ? handleVapiStop : initializeVapi}
+          disabled={vapiLoading}
+          className={`w-16 h-16 rounded-full shadow-lg flex items-center justify-center transition-all duration-300 transform hover:scale-110 ${
+            vapiStarted
+              ? 'bg-red-500 hover:bg-red-600'
+              : 'bg-blue-500 hover:bg-blue-600'
+          } text-white`}
+        >
+          {vapiLoading ? (
+            <FaSpinner className="w-6 h-6 animate-spin" />
+          ) : vapiStarted ? (
+            <FaMicrophoneSlash className="w-6 h-6" />
+          ) : (
+            <FaPhone className="w-6 h-6" />
+          )}
+        </button>
+
+        {/* Status Indicator */}
+        {vapiStarted && (
+          <div className="absolute -top-1 -right-1 w-4 h-4">
+            <div className={`w-full h-full rounded-full ${
+              assistantIsSpeaking ? 'bg-green-500' : 'bg-blue-500'
+            } animate-pulse`}/>
+          </div>
+        )}
+      </div>
+
+      {/* Thank You Message */}
+      {showThankYou && (
+        <div className="absolute bottom-full right-0 mb-4 bg-green-500 text-white px-4 py-2 rounded-lg shadow-lg animate-fade-up">
+          Thank you for using VAPI assistant!
+        </div>
+      )}
+    </div>
+  );
+
+  // Add these styles at the end of your file
+  const styles = `
+    @keyframes fade-up {
+      from {
+        opacity: 0;
+        transform: translateY(10px);
+      }
+      to {
+        opacity: 1;
+        transform: translateY(0);
+      }
+    }
+
+    .animate-fade-up {
+      animation: fade-up 0.3s ease-out forwards;
+    }
+  `;
+
   return (
     <main className="min-h-screen bg-[#f5f5f7] font-sans antialiased">
       {/* Apple-style gradient header */}
@@ -828,6 +1139,13 @@ export default function HealthcareProviderDashboard({ onLogout }) {
               Provider Dashboard
             </h1>
             <div className="flex items-center space-x-6">
+              <button
+                onClick={() => setShowUploadModal(true)}
+                className="text-sm font-medium text-gray-600 hover:text-blue-600 transition-colors duration-300 flex items-center space-x-2"
+              >
+                <FaUserPlus className="w-4 h-4" />
+                <span>Add Client</span>
+              </button>
               <button
                 onClick={() => navigate('/provider/overdue-vaccinations')}
                 className="text-sm font-medium text-gray-600 hover:text-blue-600 transition-colors duration-300 flex items-center space-x-2"
@@ -861,7 +1179,7 @@ export default function HealthcareProviderDashboard({ onLogout }) {
           </div>
           <div className="relative py-20 px-6">
             <h2 className="text-5xl font-semibold text-white mb-4">
-              Welcome, Dr. {providerInfo?.provider_name?.split(' ')[1]}
+              Welcome, HealthCare Provider
             </h2>
             <p className="text-xl text-white/90 max-w-2xl mx-auto">
               Manage your practice and patient care efficiently
@@ -1069,6 +1387,11 @@ export default function HealthcareProviderDashboard({ onLogout }) {
         )}
       </div>
 
+      {showUploadModal && <AddClientModal />}
+
+      {/* Add VapiAssistant outside the main content area */}
+      <VapiAssistant />
+      
       {/* Add smooth scrolling and transitions */}
       <style jsx>{`
         html {
@@ -1105,6 +1428,7 @@ export default function HealthcareProviderDashboard({ onLogout }) {
           animation: fade-in 0.3s ease-out;
         }
       `}</style>
+      <style jsx>{styles}</style>
     </main>
   );
 } 
