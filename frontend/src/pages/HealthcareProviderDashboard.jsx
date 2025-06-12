@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { FaMicrophone, FaMicrophoneSlash, FaUserPlus, FaSpinner, FaPhone } from 'react-icons/fa';
+import { FaMicrophone, FaMicrophoneSlash, FaUserPlus, FaSpinner, FaPhone, FaFilePdf } from 'react-icons/fa';
 import { vapi, startAssistant, stopAssistant } from '../ai';
 import outbreakImage from '../assets/images/outbreak.jpg';
 
@@ -49,6 +49,16 @@ export default function HealthcareProviderDashboard({ onLogout }) {
   const [uploadStatus, setUploadStatus] = useState('idle'); // idle, uploading, success, error
   const [uploadError, setUploadError] = useState(null);
   const fileInputRef = useRef(null);
+
+  // Add new state for PDF viewer
+  const [pdfUrl, setPdfUrl] = useState(null);
+
+  // Add URL debugging state
+  const [debugInfo, setDebugInfo] = useState({
+    receivedUrl: null,
+    processedUrl: null,
+    error: null
+  });
 
   const timeRangeLabels = {
     today: "Today's Appointments",
@@ -288,58 +298,303 @@ export default function HealthcareProviderDashboard({ onLogout }) {
     }
   };
 
-  // Update handleAgentQuery to handle vaccination recording
+  // Add useEffect to monitor pdfUrl changes
+  useEffect(() => {
+    console.log('pdfUrl state changed:', pdfUrl);
+  }, [pdfUrl]);
+
+  // Add function to handle specific vaccine queries
+  const handleVaccineQuery = async (query) => {
+    try {
+        const token = localStorage.getItem('token');
+        
+        const response = await fetch('http://localhost:8000/agent/query/provider', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'Authorization': `Bearer ${token}`
+            },
+            body: JSON.stringify({
+                query: query,
+                return_audio: true
+            })
+        });
+
+        if (!response.ok) {
+            throw new Error('Failed to process query');
+        }
+
+        const data = await response.json();
+        console.log('Voice assistant response:', data);
+
+        // Handle the response based on its type
+        if (data.type === 'vaccination_check') {
+            // Format the response for display
+            if (data.data.unvaccinated_count === 0) {
+                setAgentResponse('✅ All clients have received their MMR vaccination.');
+            } else {
+                const children = data.data.children;
+                const message = `🚨 Found ${data.data.unvaccinated_count} clients who haven't received MMR vaccination:\n` +
+                    children.map(child => `• ${child.name}`).join('\n');
+                setAgentResponse(message);
+            }
+        } else {
+            // For other types of responses, just show the message
+            setAgentResponse(data.message || 'No response from assistant');
+        }
+
+        // Handle audio response if present
+        if (data.audio) {
+            const audio = new Audio(`data:audio/mp3;base64,${data.audio}`);
+            setAudioResponse(audio);
+            await audio.play();
+        }
+    } catch (error) {
+        console.error('Error in handleVaccineQuery:', error);
+        setAgentResponse('Error: ' + error.message);
+    }
+};
+
+  // Update handleAgentQuery to use the new vaccine query handler
   const handleAgentQuery = async (query) => {
     setIsProcessing(true);
     try {
-      const token = localStorage.getItem('token');
-      
-      // Send the query to the agent endpoint
-      const response = await fetch('http://localhost:8000/agent/query/provider', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${token}`
-        },
-        body: JSON.stringify({ 
-          query,
-          return_audio: true
-        })
-      });
-
-      if (!response.ok) {
-        throw new Error('Failed to get agent response');
-      }
-
-      const data = await response.json();
-      
-      // Handle the response based on type
-      if (data.type === 'ehr_request') {
-        setAgentResponse(data.message);
-        if (data.data?.ehr_generated) {
-          speakResponse("I've generated and sent the EHR to your email.");
-        } else {
-          speakResponse(data.message);
+        // Get the token
+        const token = localStorage.getItem('token');
+        if (!token) {
+            throw new Error('No authentication token found. Please log in again.');
         }
-      } else {
-        setAgentResponse(data.text_response || data.message);
-        if (data.audio_response) {
-          const audio = new Audio(`data:audio/mp3;base64,${data.audio_response}`);
-          setAudioResponse(audio);
-          audio.play();
+
+        // Check for different types of queries
+        const vaccineCheckPattern = /(?:who|which|clients|children).*(?:have not|haven't|not).*(?:taken|received|got).*(?:vaccine|vaccination|mmr|measles)/i;
+        const ehrPattern = /(?:show|get|fetch|display).*(?:ehr|electronic health record|health record|medical record).*(?:ssn|social security|number)\s*(\d{4})/i;
+        const vaccineRecordPattern = /(?:client|patient)\s+(?:with)?\s*(?:ssn|social security number|number)?\s*(\d{4})\s+(?:has|have)\s+(?:taken|received|got)\s+(?:vaccine|vaccination)?\s*([\w-]+)(?:\s+dose\s+(\d+))?/i;
+
+        const vaccineCheckMatch = query.match(vaccineCheckPattern);
+        const ehrMatch = query.match(ehrPattern);
+        const vaccineRecordMatch = query.match(vaccineRecordPattern);
+
+        if (vaccineRecordMatch) {
+            // Handle vaccination recording
+            const ssn = vaccineRecordMatch[1];
+            const vaccineName = vaccineRecordMatch[2].trim().toUpperCase();
+            const doseNumber = vaccineRecordMatch[3] ? parseInt(vaccineRecordMatch[3]) : 1;
+            
+            console.log('Recording vaccination:', { ssn, vaccineName, doseNumber });
+
+            const response = await fetch('http://localhost:8000/agent/query/provider', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'Authorization': `Bearer ${token}`
+                },
+                body: JSON.stringify({
+                    query: query,
+                    return_audio: true,
+                    query_type: 'vaccination_record',
+                    ssn: ssn,
+                    vaccine_name: vaccineName,
+                    dose_number: doseNumber,
+                    force_update: false // Don't force update by default
+                })
+            });
+
+            const responseText = await response.text();
+            console.log('Raw vaccination record response:', responseText);
+
+            let data;
+            try {
+                data = JSON.parse(responseText);
+            } catch (e) {
+                console.error('Failed to parse response:', e);
+                throw new Error('Invalid response from server');
+            }
+
+            if (!response.ok) {
+                if (response.status === 401) {
+                    throw new Error('Your session has expired. Please log in again.');
+                } else if (response.status === 404) {
+                    throw new Error(`No client found with SSN ${ssn}`);
+                } else if (response.status === 409) {
+                    // Handle duplicate record case
+                    const message = `⚠️ A ${vaccineName} vaccination (Dose ${doseNumber}) has already been recorded today for this client. Would you like to update it?`;
+                    setAgentResponse(message);
+                    speakResponse(message);
+                    // You could add UI elements here to allow the user to force the update if needed
+                    return;
+                } else {
+                    throw new Error(`Failed to record vaccination: ${data.detail || responseText}`);
+                }
+            }
+
+            console.log('Vaccination record response:', data);
+
+            if (data.type === 'vaccination_record') {
+                let message;
+                if (data.status === 'success') {
+                    message = `✅ Successfully recorded ${vaccineName} vaccination (Dose ${doseNumber}) for client with SSN ${ssn}`;
+                    if (data.client_name) {
+                        message += ` (${data.client_name})`;
+                    }
+                } else if (data.status === 'duplicate') {
+                    message = `⚠️ This ${vaccineName} vaccination (Dose ${doseNumber}) was already recorded today.`;
+                } else {
+                    message = data.message || 'Vaccination recorded successfully.';
+                }
+                setAgentResponse(message);
+                speakResponse(message);
+            } else {
+                setAgentResponse(data.message || 'Vaccination recorded successfully.');
+            }
+
+            if (data.audio) {
+                const audio = new Audio(`data:audio/mp3;base64,${data.audio}`);
+                setAudioResponse(audio);
+                await audio.play();
+            }
+        } else if (vaccineCheckMatch) {
+            // Handle vaccine status check queries
+            const response = await fetch('http://localhost:8000/agent/query/provider', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'Authorization': `Bearer ${token}`
+                },
+                body: JSON.stringify({
+                    query: query,
+                    return_audio: true,
+                    query_type: 'vaccination_check'
+                })
+            });
+
+            if (!response.ok) {
+                const errorText = await response.text();
+                console.error('Vaccine query error response:', errorText);
+                if (response.status === 401) {
+                    throw new Error('Your session has expired. Please log in again.');
+                } else {
+                    throw new Error(`Failed to check vaccination status: ${errorText}`);
+                }
+            }
+
+            const data = await response.json();
+            console.log('Vaccine query response:', data);
+
+            if (data.type === 'vaccination_check') {
+                if (data.data.unvaccinated_count === 0) {
+                    setAgentResponse('✅ All clients have received their MMR vaccination.');
+                } else {
+                    const children = data.data.children;
+                    const message = `🚨 Found ${data.data.unvaccinated_count} clients who haven't received MMR vaccination:\n` +
+                        children.map(child => `• ${child.name}`).join('\n');
+                    setAgentResponse(message);
+                }
+            } else {
+                setAgentResponse(data.message || 'Vaccination status check completed.');
+            }
+
+            if (data.audio) {
+                const audio = new Audio(`data:audio/mp3;base64,${data.audio}`);
+                setAudioResponse(audio);
+                await audio.play();
+            }
+        } else if (ehrMatch) {
+            // Handle EHR requests (existing code)
+            const ssn = ehrMatch[1];
+            console.log('Processing EHR request for SSN:', ssn);
+
+            const response = await fetch('http://localhost:8000/agent/query/provider', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'Authorization': `Bearer ${token}`
+                },
+                body: JSON.stringify({
+                    query: `get EHR for client with SSN ${ssn}`,
+                    return_audio: true,
+                    return_pdf: true
+                })
+            });
+
+            if (!response.ok) {
+                const errorText = await response.text();
+                console.error('EHR error response:', errorText);
+                if (response.status === 401) {
+                    throw new Error('Your session has expired. Please log in again.');
+                } else if (response.status === 404) {
+                    throw new Error(`No client found with SSN ${ssn}`);
+                } else {
+                    throw new Error(`Failed to fetch EHR: ${errorText}`);
+                }
+            }
+
+            const data = await response.json();
+            console.log('EHR response:', data);
+
+            if (data.type === 'ehr_request' && data.data?.pdf_url) {
+                const pdfPath = data.data.pdf_url;
+                console.log('Received PDF URL:', pdfPath);
+                
+                let fullPdfUrl;
+                if (pdfPath.startsWith('http')) {
+                    fullPdfUrl = pdfPath;
+                } else {
+                    const filename = pdfPath.split('/').pop();
+                    fullPdfUrl = `http://localhost:8000/view-pdf/${filename}?token=${token}`;
+                }
+                
+                setPdfUrl(fullPdfUrl);
+                setAgentResponse(data.message || 'EHR report generated successfully. You can view or download it below.');
+            } else {
+                setAgentResponse(data.message || 'Failed to generate EHR report.');
+            }
+
+            if (data.audio) {
+                const audio = new Audio(`data:audio/mp3;base64,${data.audio}`);
+                setAudioResponse(audio);
+                await audio.play();
+            }
         } else {
-          speakResponse(data.text_response || data.message);
+            // Handle other types of queries
+            const response = await fetch('http://localhost:8000/agent/query/provider', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'Authorization': `Bearer ${token}`
+                },
+                body: JSON.stringify({
+                    query,
+                    return_audio: true
+                })
+            });
+
+            if (!response.ok) {
+                if (response.status === 401) {
+                    throw new Error('Your session has expired. Please log in again.');
+                }
+                throw new Error('Failed to get agent response');
+            }
+
+            const data = await response.json();
+            console.log('Agent response:', data);
+
+            setAgentResponse(data.message || 'Request processed successfully');
+
+            if (data.audio) {
+                const audio = new Audio(`data:audio/mp3;base64,${data.audio}`);
+                setAudioResponse(audio);
+                await audio.play();
+            }
         }
-      }
-    } catch (err) {
-      console.error('Error processing query:', err);
-      const errorMessage = 'Failed to process your request. Please try again.';
-      setError(errorMessage);
-      speakResponse(errorMessage);
+    } catch (error) {
+        console.error('Error in handleAgentQuery:', error);
+        setError(error.message);
+        setAgentResponse('Error: ' + error.message);
+        speakResponse('Sorry, there was an error processing your request: ' + error.message);
     } finally {
-      setIsProcessing(false);
+        setIsProcessing(false);
     }
-  };
+};
 
   // Update connection check function to use provider profile endpoint
   const checkBackendConnection = async () => {
@@ -610,20 +865,85 @@ export default function HealthcareProviderDashboard({ onLogout }) {
     fetchDiseaseOutbreak();
   }, []); // Empty dependency array means this runs once on mount
 
+  // Update handleTranscriptConfirmation function
   const handleTranscriptConfirmation = async (isConfirmed) => {
     if (isConfirmed) {
         setIsProcessing(true);
         try {
             const token = localStorage.getItem('token');
             
-            // Updated pattern to better handle variations and vaccine names
+            // Updated patterns with more flexible matching
             const vaccinationPattern = /(?:child|kid|patient)(?:\s+with)?\s+(?:id\s+)?(\d+)\s+(?:has|have)\s+(?:taken|received|got)\s+(?:vaccine|vaccination)?\s*([\w\s-]+?)(?:\s+(?:vaccine|vaccination|booster|shot|dose))?\s*(?:dose\s+(\d+))?\s+today/i;
-            const ehrPattern = /(?:fetch|get|send)\s+(?:ehr|electronic health record|health record|medical record|patient record)\s+(?:for\s+)?(?:child|kid|patient)\s+(?:with\s+)?(?:ssn\s+)?(\d{4}|\d{9})/i;
-            
+            const ehrPattern = /(?:get|fetch|show|display|pull up|retrieve)\s+(?:the\s+)?(?:ehr|electronic health record|health record|medical record|patient record|record)(?:\s+for)?\s+(?:client|patient|child|kid|jail)?\s*(?:with)?\s*(?:ssn|social security number|social security|ss number|number)?\s*(\d{4}|\d{9})/i;
+
+            console.log('Processing transcript:', {
+                original: pendingQuery,
+                normalized: pendingQuery.toLowerCase().trim()
+            });
+
             const vacMatch = pendingQuery.match(vaccinationPattern);
             const ehrMatch = pendingQuery.match(ehrPattern);
 
-            if (vacMatch) {
+            console.log('Pattern matching results:', {
+                vaccinationMatch: vacMatch ? {
+                    full: vacMatch[0],
+                    childId: vacMatch[1],
+                    vaccineName: vacMatch[2],
+                    doseNumber: vacMatch[3]
+                } : null,
+                ehrMatch: ehrMatch ? {
+                    full: ehrMatch[0],
+                    ssn: ehrMatch[1]
+                } : null
+            });
+
+            if (ehrMatch) {
+                // Handle EHR request
+                const ssn = ehrMatch[1];
+                console.log('Processing EHR request for SSN:', ssn);
+
+                const response = await fetch(`http://localhost:8000/agent/query/provider`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Authorization': `Bearer ${token}`
+                    },
+                    body: JSON.stringify({
+                        query: `get EHR for client with SSN ${ssn}`,  // Normalize the query
+                        return_audio: true,
+                        return_pdf: true,
+                        ssn: ssn
+                    })
+                });
+
+                console.log('EHR response status:', response.status);
+                
+                if (!response.ok) {
+                    const errorText = await response.text();
+                    console.error('EHR error response:', errorText);
+                    throw new Error('Failed to generate EHR');
+                }
+
+                const data = await response.json();
+                console.log('EHR response data:', data);
+                
+                // Set the response message and speak it
+                setAgentResponse(data.message || 'Retrieved EHR successfully');
+                speakResponse(data.message || 'Retrieved EHR successfully');
+
+                // Handle PDF URL
+                if (data.type === 'ehr_request' && data.data?.pdf_url) {
+                    console.log('Received PDF URL in response:', data.data.pdf_url);
+                    const fullPdfUrl = data.data.pdf_url.startsWith('http') 
+                        ? data.data.pdf_url 
+                        : `http://localhost:8000/view-pdf/${data.data.pdf_url.split('/').pop()}`;
+                    console.log('Constructed full PDF URL:', fullPdfUrl);
+                    setPdfUrl(fullPdfUrl);
+                } else {
+                    console.warn('No PDF URL in EHR response:', data);
+                    setAgentResponse(data.message || 'EHR request processed but no PDF was generated');
+                }
+            } else if (vacMatch) {
                 // Handle vaccination record
                 const childId = parseInt(vacMatch[1]);
                 const vaccineName = vacMatch[2].trim().toUpperCase();
@@ -658,56 +978,12 @@ export default function HealthcareProviderDashboard({ onLogout }) {
                 const successMessage = `Successfully recorded vaccination for patient ${childId}: ${vaccineName} dose ${doseNumber}`;
                 setAgentResponse(successMessage);
                 speakResponse(successMessage);
-            } else if (ehrMatch) {
-                // Handle EHR request
-                const ssn = ehrMatch[1];
-                console.log('Processing EHR request for SSN:', ssn);
-
-                const response = await fetch(`http://localhost:8000/provider/generate-ehr?ssn=${ssn}`, {
-                    method: 'POST',
-                    headers: {
-                        'Authorization': `Bearer ${token}`
-                    }
-                });
-
-                if (!response.ok) {
-                    throw new Error('Failed to generate EHR');
-                }
-
-                const data = await response.json();
-                setAgentResponse(data.message);
-                speakResponse(data.message);
             } else {
-                // For non-vaccination queries, proceed with normal agent query
-                const response = await fetch('http://localhost:8000/agent/query/provider', {
-                    method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json',
-                        'Authorization': `Bearer ${token}`
-                    },
-                    body: JSON.stringify({ 
-                        query: pendingQuery,
-                        return_audio: true 
-                    })
-                });
-
-                if (!response.ok) {
-                    throw new Error('Failed to get agent response');
-                }
-
-                const data = await response.json();
-                setAgentResponse(data.text_response);
-                
-                if (data.audio_response) {
-                    const audio = new Audio(`data:audio/mp3;base64,${data.audio_response}`);
-                    setAudioResponse(audio);
-                    audio.play();
-                } else {
-                    speakResponse(data.text_response);
-                }
+                console.log('No pattern match found, proceeding with general query');
+                await handleAgentQuery(pendingQuery);
             }
         } catch (err) {
-            console.error('Error processing query:', err);
+            console.error('Error in handleTranscriptConfirmation:', err);
             const errorMessage = 'Failed to process your request. Please try again.';
             setError(errorMessage);
             speakResponse(errorMessage);
@@ -930,6 +1206,55 @@ export default function HealthcareProviderDashboard({ onLogout }) {
     </div>
   );
 
+  // Add function to handle PDF viewing/downloading
+  const handlePdfAction = async (action) => {
+    try {
+        const token = localStorage.getItem('token');
+        console.log('Fetching PDF with token');
+        
+        const response = await fetch(pdfUrl, {
+            headers: {
+                'Authorization': `Bearer ${token}`
+            }
+        });
+
+        if (!response.ok) {
+            throw new Error(`Failed to fetch PDF: ${response.status}`);
+        }
+
+        const blob = await response.blob();
+        const url = window.URL.createObjectURL(blob);
+
+        if (action === 'view') {
+            window.open(url, '_blank');
+        } else if (action === 'download') {
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = pdfUrl.split('/').pop() || 'ehr_report.pdf';
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+        }
+
+        // Clean up
+        setTimeout(() => window.URL.revokeObjectURL(url), 100);
+    } catch (error) {
+        console.error('Error handling PDF:', error);
+        alert('Failed to access the PDF. Please try again.');
+    }
+};
+
+  // Add clearResponse function near other handler functions
+  const clearResponse = () => {
+    setTranscript('');
+    setAgentResponse('');
+    setAudioResponse(null);
+    setError(null);
+    setPdfUrl(null);
+    setIsConfirming(false);
+    setPendingQuery(null);
+  };
+
   if (loading) {
     return (
       <div className="min-h-screen bg-gray-50 flex items-center justify-center">
@@ -938,91 +1263,125 @@ export default function HealthcareProviderDashboard({ onLogout }) {
     );
   }
 
-  const VoiceAssistant = () => (
-    <div className="bg-white p-6 rounded-lg shadow-lg">
-      <div className="flex flex-col space-y-4">
-        <div className="flex items-center justify-between">
-          <h2 className="text-xl font-semibold">Voice Commands</h2>
-          <button
-            onClick={toggleListening}
-            className={`flex items-center space-x-2 px-4 py-2 rounded-full transition-all duration-300 ${
-              isListening
-                ? 'bg-red-500 hover:bg-red-600 text-white shadow-red-200'
-                : 'bg-blue-500 hover:bg-blue-600 text-white shadow-blue-200'
-            } shadow-lg transform hover:scale-105`}
-          >
-            {isListening ? (
-              <>
-                <FaMicrophoneSlash className="w-4 h-4" />
-                <span>Stop Recording</span>
-              </>
-            ) : (
-              <>
-                <FaMicrophone className="w-4 h-4" />
-                <span>Ask your query</span>
-              </>
-            )}
-          </button>
-        </div>
-
-        {transcript && (
-          <div className="bg-gray-50 p-4 rounded-lg border border-gray-200">
-            <p className="font-medium text-gray-700">Your command:</p>
-            <p className="text-gray-600 mt-1">{transcript}</p>
-          </div>
-        )}
-
-        {agentResponse && !isConfirming && (
-          <div className="bg-blue-50 p-4 rounded-lg border border-blue-200">
-            <p className="font-medium text-blue-700">Assistant Response:</p>
-            <p className="text-gray-700 mt-1">{agentResponse}</p>
-          </div>
-        )}
-
-        {error && (
-          <div className="bg-red-50 p-4 rounded-lg border border-red-200">
-            <p className="text-red-600">{error}</p>
-          </div>
-        )}
-
-        {isProcessing && (
-          <div className="flex items-center justify-center p-4">
-            <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-500"></div>
-          </div>
-        )}
-      </div>
-
-      {/* Confirmation Modal */}
-      {isConfirming && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-          <div className="bg-white rounded-lg p-6 w-full max-w-md transform transition-all animate-fade-up">
-            <div className="text-center mb-6">
-              <h3 className="text-xl font-semibold text-gray-900">Confirm Your Command</h3>
-              <p className="text-gray-600 mt-2">{agentResponse}</p>
-            </div>
+  // Add ConfirmationModal component
+  const ConfirmationModal = ({ transcript, onConfirm }) => (
+    <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+        <div className="bg-white rounded-lg p-6 w-full max-w-md animate-fade-up">
+            <h2 className="text-xl font-semibold text-gray-900 mb-4">Confirm Your Command</h2>
             
-            <div className="bg-gray-50 p-4 rounded-lg border border-gray-200 mb-6">
-              <p className="font-medium text-gray-700">Your command:</p>
-              <p className="text-gray-600 mt-1">{transcript}</p>
+            <div className="bg-gray-50 p-4 rounded-lg mb-6">
+                <p className="text-gray-600 font-medium mb-2">Is this what you said?</p>
+                <p className="text-gray-800">{transcript}</p>
             </div>
 
             <div className="flex space-x-4">
-              <button
-                onClick={() => handleTranscriptConfirmation(true)}
-                className="flex-1 px-4 py-3 bg-green-500 text-white rounded-lg hover:bg-green-600 transition-all duration-300 transform hover:scale-105 shadow-lg shadow-green-200 font-medium"
-              >
-                Yes, That's Correct
-              </button>
-              <button
-                onClick={() => handleTranscriptConfirmation(false)}
-                className="flex-1 px-4 py-3 bg-red-500 text-white rounded-lg hover:bg-red-600 transition-all duration-300 transform hover:scale-105 shadow-lg shadow-red-200 font-medium"
-              >
-                No, Let Me Repeat
-              </button>
+                <button
+                    onClick={() => onConfirm(true)}
+                    className="flex-1 bg-green-500 text-white py-3 px-4 rounded-lg hover:bg-green-600 transition-colors duration-200 font-medium"
+                >
+                    Yes, That's Correct
+                </button>
+                <button
+                    onClick={() => onConfirm(false)}
+                    className="flex-1 bg-red-500 text-white py-3 px-4 rounded-lg hover:bg-red-600 transition-colors duration-200 font-medium"
+                >
+                    No, Let Me Repeat
+                </button>
             </div>
-          </div>
         </div>
-      )}
+    </div>
+  );
+
+  // Update the VoiceAssistant component
+  const VoiceAssistant = () => (
+    <div className="bg-white p-6 rounded-lg shadow-lg">
+        <div className="flex flex-col space-y-4">
+            <div className="flex items-center justify-between">
+                <h2 className="text-xl font-semibold">Voice Commands</h2>
+                <div className="flex items-center space-x-3">
+                    <button
+                        onClick={toggleListening}
+                        className={`flex items-center space-x-2 px-4 py-2 rounded-full transition-all duration-300 ${
+                            isListening
+                                ? 'bg-red-500 hover:bg-red-600 text-white shadow-red-200'
+                                : 'bg-blue-500 hover:bg-blue-600 text-white shadow-blue-200'
+                        } shadow-lg transform hover:scale-105`}
+                    >
+                        {isListening ? (
+                            <>
+                                <FaMicrophoneSlash className="w-5 h-5" />
+                                <span>Stop Listening</span>
+                            </>
+                        ) : (
+                            <>
+                                <FaMicrophone className="w-5 h-5" />
+                                <span>Start Listening</span>
+                            </>
+                        )}
+                    </button>
+                    <button
+                        onClick={clearResponse}
+                        className="flex items-center space-x-2 px-4 py-2 rounded-full bg-gray-500 hover:bg-gray-600 text-white shadow-lg transform hover:scale-105 transition-all duration-300"
+                    >
+                        <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                        </svg>
+                        <span>Clear</span>
+                    </button>
+                </div>
+            </div>
+
+            {isProcessing && (
+                <div className="flex justify-center">
+                    <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-500"></div>
+                </div>
+            )}
+
+            {transcript && !isConfirming && (
+                <div className="bg-gray-50 p-4 rounded-lg">
+                    <p className="text-gray-600 font-medium mb-2">Your command:</p>
+                    <p className="text-gray-800">{transcript}</p>
+                </div>
+            )}
+
+            {agentResponse && (
+                <div className="bg-gray-50 p-6 rounded-lg shadow-sm">
+                    <p className="text-gray-800 mb-6 whitespace-pre-line">{agentResponse}</p>
+                    {pdfUrl && (
+                        <div className="flex flex-col sm:flex-row gap-4">
+                            <button
+                                onClick={() => handlePdfAction('view')}
+                                className="flex items-center justify-center space-x-2 px-4 py-2 bg-blue-500 text-white rounded-lg hover:bg-blue-600 transition-colors"
+                            >
+                                <FaFilePdf className="w-5 h-5" />
+                                <span>View PDF</span>
+                            </button>
+                            <button
+                                onClick={() => handlePdfAction('download')}
+                                className="flex items-center justify-center space-x-2 px-4 py-2 bg-green-500 text-white rounded-lg hover:bg-green-600 transition-colors"
+                            >
+                                <FaFilePdf className="w-5 h-5" />
+                                <span>Download PDF</span>
+                            </button>
+                        </div>
+                    )}
+                </div>
+            )}
+
+            {error && (
+                <div className="bg-red-50 p-4 rounded-lg">
+                    <p className="text-red-800">{error}</p>
+                </div>
+            )}
+        </div>
+
+        {/* Show confirmation modal as an overlay when needed */}
+        {isConfirming && (
+            <ConfirmationModal
+                transcript={transcript}
+                onConfirm={handleTranscriptConfirmation}
+            />
+        )}
     </div>
   );
 
@@ -1127,24 +1486,6 @@ export default function HealthcareProviderDashboard({ onLogout }) {
       )}
     </div>
   );
-
-  // Add these styles at the end of your file
-  const styles = `
-    @keyframes fade-up {
-      from {
-        opacity: 0;
-        transform: translateY(10px);
-      }
-      to {
-        opacity: 1;
-        transform: translateY(0);
-      }
-    }
-
-    .animate-fade-up {
-      animation: fade-up 0.3s ease-out forwards;
-    }
-  `;
 
   return (
     <main className="min-h-screen bg-[#f5f5f7] font-sans antialiased">
@@ -1410,7 +1751,8 @@ export default function HealthcareProviderDashboard({ onLogout }) {
       <VapiAssistant />
       
       {/* Add smooth scrolling and transitions */}
-      <style jsx>{`
+      <style>
+        {`
         html {
           scroll-behavior: smooth;
         }
@@ -1444,8 +1786,23 @@ export default function HealthcareProviderDashboard({ onLogout }) {
         .animate-fade-in {
           animation: fade-in 0.3s ease-out;
         }
-      `}</style>
-      <style jsx>{styles}</style>
+
+        @keyframes fade-up {
+          from {
+            opacity: 0;
+            transform: translateY(10px);
+          }
+          to {
+            opacity: 1;
+            transform: translateY(0);
+          }
+        }
+
+        .animate-fade-up {
+          animation: fade-up 0.3s ease-out forwards;
+        }
+        `}
+      </style>
     </main>
   );
 } 
