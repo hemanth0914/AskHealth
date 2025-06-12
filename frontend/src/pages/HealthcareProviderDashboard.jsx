@@ -833,11 +833,12 @@ export default function HealthcareProviderDashboard({ onLogout }) {
         setUploadError(data.message);
       } else if (data.status === 'success') {
         setUploadStatus('success');
+        setUploadError("Client's EHR has been uploaded successfully. Waiting for the approval from DSHS");
         setTimeout(() => {
           setShowUploadModal(false);
           setSelectedFile(null);
           setUploadStatus('idle');
-        }, 2000);
+        }, 4000);
       }
     } catch (error) {
       console.error('Upload error:', error);
@@ -890,7 +891,9 @@ export default function HealthcareProviderDashboard({ onLogout }) {
 
           {uploadError && (
             <div className={`text-sm ${
-              uploadStatus === 'warning' ? 'text-orange-500' : 'text-red-500'
+              uploadStatus === 'warning' ? 'text-orange-500' : 
+              uploadStatus === 'success' ? 'text-green-500' :
+              'text-red-500'
             }`}>
               {uploadError}
             </div>
@@ -915,7 +918,7 @@ export default function HealthcareProviderDashboard({ onLogout }) {
                 <span>Uploading...</span>
               </>
             ) : uploadStatus === 'success' ? (
-              'Upload Successful!'
+              'Success!'
             ) : uploadStatus === 'warning' ? (
               'Client Already Exists'
             ) : (
@@ -969,28 +972,10 @@ export default function HealthcareProviderDashboard({ onLogout }) {
           </div>
         )}
 
-        {agentResponse && (
+        {agentResponse && !isConfirming && (
           <div className="bg-blue-50 p-4 rounded-lg border border-blue-200">
             <p className="font-medium text-blue-700">Assistant Response:</p>
             <p className="text-gray-700 mt-1">{agentResponse}</p>
-            
-            {/* Show confirmation buttons when there's a pending query */}
-            {isConfirming && (
-              <div className="mt-4 flex space-x-4">
-                <button
-                  onClick={() => handleTranscriptConfirmation(true)}
-                  className="px-4 py-2 bg-green-500 text-white rounded-md hover:bg-green-600 transition-all duration-300 transform hover:scale-105 shadow-lg shadow-green-200"
-                >
-                  Yes, That's Correct
-                </button>
-                <button
-                  onClick={() => handleTranscriptConfirmation(false)}
-                  className="px-4 py-2 bg-red-500 text-white rounded-md hover:bg-red-600 transition-all duration-300 transform hover:scale-105 shadow-lg shadow-red-200"
-                >
-                  No, Let Me Repeat
-                </button>
-              </div>
-            )}
           </div>
         )}
 
@@ -1006,6 +991,38 @@ export default function HealthcareProviderDashboard({ onLogout }) {
           </div>
         )}
       </div>
+
+      {/* Confirmation Modal */}
+      {isConfirming && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+          <div className="bg-white rounded-lg p-6 w-full max-w-md transform transition-all animate-fade-up">
+            <div className="text-center mb-6">
+              <h3 className="text-xl font-semibold text-gray-900">Confirm Your Command</h3>
+              <p className="text-gray-600 mt-2">{agentResponse}</p>
+            </div>
+            
+            <div className="bg-gray-50 p-4 rounded-lg border border-gray-200 mb-6">
+              <p className="font-medium text-gray-700">Your command:</p>
+              <p className="text-gray-600 mt-1">{transcript}</p>
+            </div>
+
+            <div className="flex space-x-4">
+              <button
+                onClick={() => handleTranscriptConfirmation(true)}
+                className="flex-1 px-4 py-3 bg-green-500 text-white rounded-lg hover:bg-green-600 transition-all duration-300 transform hover:scale-105 shadow-lg shadow-green-200 font-medium"
+              >
+                Yes, That's Correct
+              </button>
+              <button
+                onClick={() => handleTranscriptConfirmation(false)}
+                className="flex-1 px-4 py-3 bg-red-500 text-white rounded-lg hover:bg-red-600 transition-all duration-300 transform hover:scale-105 shadow-lg shadow-red-200 font-medium"
+              >
+                No, Let Me Repeat
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 
